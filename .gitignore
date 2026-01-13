@@ -1,0 +1,66 @@
+# Python
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+
+# Virtual Environment
+
+venv/
+.env/
+.venv/
+
+
+# Environment variables
+
+.env
+.env.local
+
+
+# Database files
+
+*.db
+*.sqlite
+*.sqlite3
+
+
+# Data / Scraped files
+
+data/
+*.csv
+*.json
+
+
+# Vector / Embeddings
+
+embeddings/
+faiss_index/
+*.npy
+*.pkl
+
+
+# OS / Editor
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+
+# API / Secrets
+
+secrets/
+config.yaml
+
+
+# Model cache (Ollama / LLMs)
+
+ollama/
+models/
+
+# Logs
+
+logs/
