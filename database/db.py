@@ -12,6 +12,9 @@ def get_connection():
     )
 
 
+
+
+
 @contextmanager
 def get_db_connection():
     """Context manager for database connections to ensure proper cleanup."""
