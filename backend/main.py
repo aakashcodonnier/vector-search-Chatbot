@@ -54,6 +54,10 @@ def chat(data: QuestionRequest):
     {question}
     """
 
+
+
+
+
     try:
         res = requests.post(
             "http://localhost:11434/api/generate",
