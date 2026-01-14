@@ -54,10 +54,6 @@ def chat(data: QuestionRequest):
     {question}
     """
 
-
-
-
-
     try:
         res = requests.post(
             "http://localhost:11434/api/generate",
@@ -73,6 +69,8 @@ def chat(data: QuestionRequest):
 
     except Exception as e:
         answer = f"Ollama error: {str(e)}"
+
+
 
     return {
         "answer": answer.strip(),
