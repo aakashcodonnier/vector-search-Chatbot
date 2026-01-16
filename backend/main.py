@@ -4,9 +4,13 @@ from sentence_transformers import SentenceTransformer
 from database.db import get_connection
 import numpy as np
 import ast
+import subprocess
+import requests
 
 app = FastAPI()
-model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Embedding model (only for vector search)
+embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 class ChatRequest(BaseModel):
@@ -16,75 +20,144 @@ class ChatRequest(BaseModel):
 def cosine(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
+import re
 
-def clean_content(text: str) -> str:
-    """
-    Remove references / footer part from article
-    """
-    stop_words = [
-        "References:",
-        "REFERENCES:",
-        "To learn more",
-        "Click here",
-        "For more information"
-    ]
+def clean_context(text: str) -> str:
+    # Remove numbered points like "1.", "2)"
+    text = re.sub(r"\n?\s*\d+[\.\)]\s*", " ", text)
+
+    # Remove bullet symbols
+    text = re.sub(r"[•\-–▪]", " ", text)
+
+    # Remove reference / links section
+    stop_words = ["References", "REFERENCES", "http", "www."]
     for w in stop_words:
         if w in text:
             text = text.split(w)[0]
+
     return text.strip()
 
 
-def summarize_text(text: str, max_sentences: int = 6) -> str:
+
+def call_llama2(prompt: str) -> str:
     """
-    Take only first 5–6 meaningful sentences
+    Call locally running LLaMA-2 via Ollama
     """
-    sentences = text.replace("\n", " ").split(". ")
-    summary = ". ".join(sentences[:max_sentences])
-    return summary.strip()
+    try:
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "llama2:latest",
+                "prompt": prompt,
+                "stream": False
+            },
+            timeout=180
+        )
+
+        # 🔍 DEBUG: raw response
+        print("OLLAMA STATUS:", response.status_code)
+        print("OLLAMA RAW:", response.text)
+
+        data = response.json()
+
+        # ✅ SAFETY CHECKS
+        if not isinstance(data, dict):
+            return "Invalid response format from LLaMA-2."
+
+        answer = data.get("response", "").strip()
+
+        if not answer:
+            return (
+                "Based on the provided context, the available information is limited. "
+                "The article discusses the topic in a general or theoretical manner "
+                "and does not provide sufficient evidence to give a detailed answer."
+            )
+
+        return answer
+
+    except Exception as e:
+        return f"LLaMA-2 API error: {str(e)}"
+
+
+
+
 
 
 @app.post("/chat")
 def chat(q: ChatRequest):
-    query_emb = model.encode(q.question)
+    # 1️⃣ Embed user question
+    query_emb = embed_model.encode(q.question)
 
+    # 2️⃣ Fetch articles from DB
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
     cur.execute("SELECT title, content, embedding FROM articles")
     rows = cur.fetchall()
 
-    best = []
+    scored = []
 
+    # 3️⃣ Vector similarity search
     for r in rows:
         emb = np.array(ast.literal_eval(r["embedding"]))
         score = cosine(query_emb, emb)
 
-        # 🔥 dynamic keyword boost
+        # Soft keyword boost
         if any(word in r["title"].lower() for word in q.question.lower().split()):
             score += 0.1
 
         if score > 0.30:
-            best.append((score, r))
+            scored.append((score, r))
 
-    best = sorted(best, key=lambda x: x[0], reverse=True)[:2]
+    # top 2 references
+    scored = sorted(scored, key=lambda x: x[0], reverse=True)[:2]
 
-    if not best:
+    if not scored:
         return {
-            "answer": "No relevant article found in database",
+            "answer": "No relevant information found in the available blogs.",
             "references": []
         }
 
+    # 4️⃣ Build context for LLaMA-2
+    context_parts = []
     references = []
-    final_text = []
 
-    for _, article in best:
-        references.append(article["title"])
+    for _, art in scored:
+        references.append(art["title"])
+        cleaned = clean_context(art["content"][:800])
+        context_parts.append(cleaned)
 
-        cleaned = clean_content(article["content"])
-        summary = summarize_text(cleaned, max_sentences=6)
+    print("CONTEXT LENGTH:", len(context_parts))
 
-        final_text.append(summary)
+    context = "\n\n".join(context_parts)
+
+    # 5️⃣ Controlled prompt (5–6 bullet points)
+    prompt = f"""
+You are a scientific research assistant.
+
+Answer the user's question strictly using only the information provided in the blog context.
+Write ONE single concise academic paragraph of no more than 4 sentences.
+Focus ONLY on the study size, its purpose, and its limitations.
+Do NOT mention disease mechanisms, biological pathways, test names, or technical terminology.
+Do NOT include multiple paragraphs or line breaks.
+Do NOT use bullet points, numbering, or headings.
+Do NOT use promotional, persuasive, or speculative language.
+If the study is small or preliminary, clearly state that it provides only initial insights
+and that larger, well-controlled studies are required.
+
+Context:
+{context}
+
+Question:
+{q.question}
+
+Answer:
+"""
+
+    # 6️⃣ Generate answer using LLaMA-2
+    answer = call_llama2(prompt)
+    answer = " ".join(answer.split())
 
     return {
-        "answer": "\n\n".join(final_text),
+        "answer": answer,
         "references": references
     }
