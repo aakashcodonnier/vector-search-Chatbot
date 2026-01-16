@@ -130,3 +130,17 @@ Response:
     "Glenn Stone’s pH Miracle Story – Reversing Cancer NOW!"
   ]
 }
+
+
+# Question ...........
+
+1. { "question": "What is ovarian cancer?" }
+
+
+2. { "question": "Is cancer reversible naturally?" }
+
+
+3. { "question": "Cancer prevention through diet" }
+
+
+4. { "question": "Breast cancer alkaline diet" }

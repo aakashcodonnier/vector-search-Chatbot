@@ -1,76 +1,90 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-import json, requests
 from database.db import get_connection
+import numpy as np
+import ast
 
 app = FastAPI()
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-class QuestionRequest(BaseModel):
+
+class ChatRequest(BaseModel):
     question: str
 
+
+def cosine(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+def clean_content(text: str) -> str:
+    """
+    Remove references / footer part from article
+    """
+    stop_words = [
+        "References:",
+        "REFERENCES:",
+        "To learn more",
+        "Click here",
+        "For more information"
+    ]
+    for w in stop_words:
+        if w in text:
+            text = text.split(w)[0]
+    return text.strip()
+
+
+def summarize_text(text: str, max_sentences: int = 6) -> str:
+    """
+    Take only first 5–6 meaningful sentences
+    """
+    sentences = text.replace("\n", " ").split(". ")
+    summary = ". ".join(sentences[:max_sentences])
+    return summary.strip()
+
+
 @app.post("/chat")
-def chat(data: QuestionRequest):
-    question = data.question
-
-    if not question.strip():
-        raise HTTPException(status_code=400, detail="Question cannot be empty")
-
-    q_vec = model.encode(question)
+def chat(q: ChatRequest):
+    query_emb = model.encode(q.question)
 
     conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT title, content, embedding FROM articles")
-    rows = cursor.fetchall()
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT title, content, embedding FROM articles")
+    rows = cur.fetchall()
 
-    scored = []
+    best = []
+
     for r in rows:
-        score = cosine_similarity(
-            [q_vec],
-            [json.loads(r["embedding"])]
-        )[0][0]
-        scored.append((score, r))
+        emb = np.array(ast.literal_eval(r["embedding"]))
+        score = cosine(query_emb, emb)
 
-    top = sorted(scored, reverse=True)[:2]
+        # 🔥 dynamic keyword boost
+        if any(word in r["title"].lower() for word in q.question.lower().split()):
+            score += 0.1
 
-    context = ""
+        if score > 0.30:
+            best.append((score, r))
+
+    best = sorted(best, key=lambda x: x[0], reverse=True)[:2]
+
+    if not best:
+        return {
+            "answer": "No relevant article found in database",
+            "references": []
+        }
+
     references = []
+    final_text = []
 
-    for _, art in top:
-        context += art["content"][:600] + "\n\n"
-        references.append(art["title"])
+    for _, article in best:
+        references.append(article["title"])
 
-    prompt = f"""
-    You are a research assistant.
-    Answer ONLY using the data below.
-    If not found, say "Not found in database".
+        cleaned = clean_content(article["content"])
+        summary = summarize_text(cleaned, max_sentences=6)
 
-    DATA:
-    {context}
-
-    QUESTION:
-    {question}
-    """
-
-    try:
-        res = requests.post(
-            "http://localhost:11434/api/generate",
-            json={
-                "model": "llama2",
-                "prompt": prompt,
-                "stream": False
-            },
-            timeout=120
-        )
-
-        answer = res.json().get("response", "No response from model")
-
-    except Exception as e:
-        answer = f"Ollama error: {str(e)}"
+        final_text.append(summary)
 
     return {
-        "answer": answer.strip(),
+        "answer": "\n\n".join(final_text),
         "references": references
     }

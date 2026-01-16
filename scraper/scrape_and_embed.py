@@ -1,99 +1,113 @@
 import requests
-import json
 from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
 from database.db import get_connection
 
-BASE_URL = "https://phoreveryoung.wordpress.com/category/case-studies/"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-# 🔹 Load embedding model (vector generator)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# 🔹 DB connection
+BASE_URL = "https://phoreveryoung.wordpress.com/category/case-studies/"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
 conn = get_connection()
-cursor = conn.cursor()
+cur = conn.cursor()
+
+# Table create
+cur.execute("""
+CREATE TABLE IF NOT EXISTS articles (
+    id INT(11) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    title TEXT,
+    url TEXT,
+    date VARCHAR(100),
+    author VARCHAR(255),
+    categories TEXT,
+    content LONGTEXT,
+    embedding LONGTEXT
+)
+""")
 
 page = 1
-total_inserted = 0
 
 while True:
-    page_url = f"{BASE_URL}page/{page}/"
-    print(f"🔍 Scraping page {page}: {page_url}")
+    if page == 1:
+        page_url = BASE_URL
+    else:
+        page_url = f"{BASE_URL}page/{page}/"
+
+    print(f"\n📄 Scraping page: {page_url}")
 
     response = requests.get(page_url, headers=HEADERS)
     soup = BeautifulSoup(response.text, "html.parser")
 
     articles = soup.find_all("article")
-
-    # ❌ No more pages
     if not articles:
-        print("🚫 No more articles found. Stopping scraping.")
+        print("🚫 No more pages found. Stopping.")
         break
 
     for art in articles:
-        # 🔹 Title + URL
         title_tag = art.find("h1", class_="entry-title")
-        title = title_tag.get_text(strip=True) if title_tag else ""
-        url = title_tag.find("a")["href"] if title_tag and title_tag.find("a") else ""
-
-        if not url:
+        if not title_tag or not title_tag.find("a"):
             continue
 
-        # 🔹 Duplicate check (VERY IMPORTANT)
-        cursor.execute("SELECT id FROM articles WHERE url = %s", (url,))
-        if cursor.fetchone():
-            print(f"⏩ Skipping duplicate: {title}")
+        url = title_tag.find("a")["href"]
+
+        # 🔍 DUPLICATE CHECK
+        cur.execute("SELECT id FROM articles WHERE url=%s LIMIT 1", (url,))
+        if cur.fetchone():
+            print(f"⏭️ Skipped duplicate: {url}")
             continue
 
-        # 🔹 Date
-        date_tag = art.find("time")
-        date = date_tag.get_text(strip=True) if date_tag else ""
+        # Detail page
+        detail_res = requests.get(url, headers=HEADERS)
+        detail = BeautifulSoup(detail_res.text, "html.parser")
 
-        # 🔹 Author
-        author_tag = art.find("span", class_="author")
-        author = author_tag.get_text(strip=True) if author_tag else ""
+        title_el = detail.find("h1", class_="entry-title")
+        title = title_el.get_text(strip=True) if title_el else ""
 
-        # 🔹 Categories
+        date_el = detail.find("time", class_="entry-date")
+        date = date_el.get_text(strip=True) if date_el else ""
+
+        author_el = detail.find("span", class_="author")
+        author = author_el.get_text(strip=True) if author_el else ""
+
         categories = ", ".join(
-            c.get_text(strip=True) for c in art.select(".cat-links a")
+            c.get_text(strip=True)
+            for c in detail.select(".cat-links a")
         )
 
-        # 🔹 Content (full text visible on category page)
-        content_div = art.find("div", class_="entry-content")
-        content_text = content_div.get_text(" ", strip=True) if content_div else ""
-
-        if not content_text:
+        content_div = detail.find("div", class_="entry-content")
+        if not content_div:
             continue
 
-        # 🔹 Create vector embedding
-        embedding = model.encode(title + " " + content_text).tolist()
+        content = " ".join(
+            p.get_text(" ", strip=True)
+            for p in content_div.find_all("p")
+        )
 
-        # 🔹 Insert into SQL DB
-        cursor.execute(
-            """
-            INSERT INTO articles 
+        if len(content) < 200:
+            continue
+
+        embedding = model.encode(content).tolist()
+
+        cur.execute("""
+            INSERT INTO articles
             (title, url, date, author, categories, content, embedding)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """,
-            (
-                title,
-                url,
-                date,
-                author,
-                categories,
-                content_text,
-                json.dumps(embedding)
-            )
-        )
+        """, (
+            title,
+            url,
+            date,
+            author,
+            categories,
+            content,
+            str(embedding)
+        ))
 
-        total_inserted += 1
+        conn.commit()
         print(f"✅ Inserted: {title}")
 
-    conn.commit()
     page += 1
 
-cursor.close()
 conn.close()
-
-print(f"\n🎉 DONE! Total articles inserted: {total_inserted}")
+print("\n🎉 ALL CASE STUDY ARTICLES SCRAPED & STORED SUCCESSFULLY")
