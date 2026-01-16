@@ -70,8 +70,6 @@ def chat(data: QuestionRequest):
     except Exception as e:
         answer = f"Ollama error: {str(e)}"
 
-
-
     return {
         "answer": answer.strip(),
         "references": references

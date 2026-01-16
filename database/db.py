@@ -10,11 +10,6 @@ def get_connection():
         password="",  # UPDATE HERE
         database="case_studies_db"
     )
-
-
-
-
-
 @contextmanager
 def get_db_connection():
     """Context manager for database connections to ensure proper cleanup."""
