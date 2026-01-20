@@ -58,7 +58,7 @@ python download_model.py
 ```bash
 python download_model.py
 ```
-This will download Llama2 (high quality model) automatically.
+This will download TinyLlama (fastest model) automatically.
 
 4. **Configure database**:
 - Edit `database/db.py` with your MySQL credentials
@@ -90,14 +90,13 @@ uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ## ⚡ Performance
 
 **Current Configuration (Fastest)**:
-- Model: Llama2 (7B params) - High quality responses
+- Model: TinyLlama (1.1B params) - 2-3x faster than Llama2
 - Context: 500 characters per article
 - Articles: Top 1 match (instead of 2)
 - Expected response time: 8-12 seconds
 
-**Previous Configurations**:
-- Model: Mistral (7B params)
-- Model: TinyLlama (1.1B params)
+**Previous Configuration**:
+- Model: Llama2 (7B params)
 - Context: 800 characters
 - Articles: Top 2 matches
 - Response time: ~21 seconds
@@ -138,7 +137,7 @@ uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ## 💡 Performance Tips
 
 **For Faster Responses**:
-- Use Llama2 model (default)
+- Use TinyLlama model (default)
 - Reduce context size
 - Use fewer reference articles
 

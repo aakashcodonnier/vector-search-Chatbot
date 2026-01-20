@@ -1,13 +1,20 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
-from database.db import get_connection
 import numpy as np
 import ast
 import subprocess
 import requests
 import time
-from datetime import datetime
+
+# Add the project root directory to the Python path
+import sys
+import os
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.insert(0, project_root)
+
+from database.db import get_connection
 
 app = FastAPI()
 
@@ -80,16 +87,11 @@ def call_llama2(prompt: str) -> str:
         response = requests.post(
             "http://localhost:11434/api/generate",
             json={
-                "model": "llama2:latest",  # Llama2 7B model
+                "model": "llama2:latest",
                 "prompt": prompt,
-                "stream": False,
-                "options": {
-                    "temperature": 0.7,
-                    "top_p": 0.9,
-                    "repeat_penalty": 1.2
-                }
+                "stream": False
             },
-            timeout=300  # Increased timeout for Mistral 7B
+            timeout=180
         )
 
         # 🔍 DEBUG: raw response
@@ -118,26 +120,21 @@ def call_llama2(prompt: str) -> str:
 
 @app.post("/chat")
 def chat(q: ChatRequest):
+    # Start timing
     start_time = time.time()
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    print(f"\n[{timestamp}] 🚀 REQUEST STARTED")
-    print(f"Question: {q.question}")
     
     # 1️⃣ Embed user question
     embed_start = time.time()
     query_emb = embed_model.encode(q.question)
     embed_time = time.time() - embed_start
-    print(f"✅ Embedding time: {embed_time:.2f}s")
 
     # 2️⃣ Fetch articles from DB
     db_start = time.time()
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT title, content, embedding FROM articles")
+    cur.execute("SELECT title, content, embedding FROM dr_young_all_articles")
     rows = cur.fetchall()
     db_time = time.time() - db_start
-    print(f"✅ Database fetch time: {db_time:.2f}s (found {len(rows)} articles)")
 
     scored = []
 
@@ -151,14 +148,12 @@ def chat(q: ChatRequest):
         if any(word in r["title"].lower() for word in q.question.lower().split()):
             score += 0.1
 
-        if score > 0.25:  # Lowered threshold for faster matching
+        if score > 0.30:
             scored.append((score, r))
-    
-    search_time = time.time() - search_start
-    print(f"✅ Similarity search time: {search_time:.2f}s (found {len(scored)} matches)")
 
-    # top 1 reference (faster)
-    scored = sorted(scored, key=lambda x: x[0], reverse=True)[:1]
+    # top 2 references
+    scored = sorted(scored, key=lambda x: x[0], reverse=True)[:2]
+    search_time = time.time() - search_start
 
     if not scored:
         return {
@@ -173,16 +168,15 @@ def chat(q: ChatRequest):
 
     for _, art in scored:
         references.append(art["title"])
-        cleaned = clean_context(art["content"][:500])  # Reduced context size
+        cleaned = clean_context(art["content"][:800])
         context_parts.append(cleaned)
+
+    print("CONTEXT LENGTH:", len(context_parts))
 
     context = "\n\n".join(context_parts)
     context_time = time.time() - context_start
-    print(f"✅ Context building time: {context_time:.2f}s (using {len(context_parts)} articles)")
-    print(f"📊 Total context length: {len(context)} characters")
 
     # 5️⃣ Controlled prompt (5–6 bullet points)
-    prompt_build_start = time.time()
     prompt = f"""
 You are a scientific research assistant.
 
@@ -211,25 +205,24 @@ Question:
 
 Answer:
 """
-    prompt_time = time.time() - prompt_build_start
-    print(f"✅ Prompt building time: {prompt_time:.4f}s")
-    print(f"📊 Prompt length: {len(prompt)} characters")
 
     # 6️⃣ Generate answer using LLaMA-2
     llm_start = time.time()
-    raw_answer = call_llama2(prompt)
-    answer = sanitize_answer(raw_answer, q.question)
-
+    answer = call_llama2(prompt)
     llm_time = time.time() - llm_start
-    
     answer = " ".join(answer.split())
     
+    # Calculate total time
     total_time = time.time() - start_time
     
-    print(f"✅ LLM generation time: {llm_time:.2f}s")
-    print(f"📊 Answer length: {len(answer)} characters")
-    print(f"✅ TOTAL TIME: {total_time:.2f}s")
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 🎉 REQUEST COMPLETED\n")
+    # Print timing information
+    print(f"⏱️ TIMING BREAKDOWN:")
+    print(f"   Embedding: {embed_time:.2f}s")
+    print(f"   Database: {db_time:.2f}s")
+    print(f"   Search: {search_time:.2f}s")
+    print(f"   Context building: {context_time:.2f}s")
+    print(f"   LLM generation: {llm_time:.2f}s")
+    print(f"   TOTAL: {total_time:.2f}s")
     
     return {
         "answer": answer,
@@ -239,7 +232,6 @@ Answer:
             "database": round(db_time, 2),
             "search": round(search_time, 2),
             "context_building": round(context_time, 2),
-            "prompt_building": round(prompt_time, 4),
             "llm_generation": round(llm_time, 2),
             "total": round(total_time, 2)
         }
