@@ -1,5 +1,7 @@
 
-# Vector Search Chatbot with SQL Database
+# Blog QA System
+
+A question-answering system that scrapes blog posts and answers questions using LLM.
 
 
 
@@ -19,8 +21,8 @@
 ### 3. Chat Interface
 - User submits a question
 - Question is converted to vector embedding
-- System finds top 2 most semantically similar articles
-- References are extracted and sent to LLaMA2 for response generation
+- System finds top 1 most semantically similar article (optimized for speed)
+- References are extracted and sent to TinyLlama for response generation
 - Returns AI-generated answer with source references
 
 ## Components
@@ -28,8 +30,8 @@
 ### Backend (`backend/main.py`)
 - FastAPI server with `/chat` endpoint
 - Handles vector similarity search
-- Integrates with Ollama for LLaMA2 inference
-- Comprehensive error handling and logging
+- Integrates with Ollama for TinyLlama inference (fastest model)
+- Comprehensive error handling and detailed timing logs
 
 ### Database (`database/db.py`)
 - MySQL connection management
@@ -40,107 +42,108 @@
 - Vector embedding generation
 - SQL storage with embeddings
 
-## Setup
+## 🚀 Quick Setup
 
-1. Install dependencies: `pip install -r requirements.txt`
-2. Set up MySQL database named `case_studies_db`
-3. Update database credentials in `database/db.py`
-4. Install Ollama and pull the `llama2` model
-5. Run the scraper: `python scraper/scrape_and_embed.py`
-6. Start the server: `uvicorn backend.main:app --reload` Backend ChatBot API Run
-7. Open http://127.0.0.1:8000/docs
+1. **Install dependencies**:
+```bash
+pip install -r requirements.txt
+```
+
+2. **Download the model** (automatic):
+```bash
+python download_model.py
+```
+
+3. **Download the model** (automatic):
+```bash
+python download_model.py
+```
+This will download Llama2 (high quality model) automatically.
+
+4. **Configure database**:
+- Edit `database/db.py` with your MySQL credentials
+- Create database: `case_studies_db`
+
+5. **Run the scraper** (first time only):
+```bash
+python scraper/scrape_and_embed.py
+```
+
+6. **Start the server** (choose one):
+
+**Option A - Direct Python** (recommended):
+```bash
+python backend/main.py
+```
+
+**Option B - Uvicorn** (alternative):
+```bash
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+7. **Access the API**:
+- Open http://127.0.0.1:8000/docs for interactive documentation
 
 
 
 
-## Usage
+## ⚡ Performance
 
-1. Run the server
-2. Send POST requests to `/chat` with a `question` parameter
-3. Receive AI-generated responses with source references
+**Current Configuration (Fastest)**:
+- Model: Llama2 (7B params) - High quality responses
+- Context: 500 characters per article
+- Articles: Top 1 match (instead of 2)
+- Expected response time: 8-12 seconds
 
-## API Endpoints
+**Previous Configurations**:
+- Model: Mistral (7B params)
+- Model: TinyLlama (1.1B params)
+- Context: 800 characters
+- Articles: Top 2 matches
+- Response time: ~21 seconds
+
+## 🛠️ Requirements
+
+- Python 3.8+
+- MySQL database
+- Ollama (https://ollama.ai)
+- Internet connection for scraping
+
+## 📁 Project Structure
+
+```
+├── backend/           # FastAPI server
+├── database/          # MySQL connection
+├── scraper/           # Web scraper
+├── download_model.py  # Auto model downloader
+└── requirements.txt   # Dependencies
+```
+
+## 🌐 API Endpoints
 
 - `GET /` - Health check
 - `POST /chat` - Chat endpoint (accepts JSON with `question` field)
 - `GET /docs` - Interactive API documentation
 
 
-# EXAMPLE 
-1. 
-Request:
-{
-  "question": "lung cancer case study"
-}
+## 💡 Example Requests
 
+**Sample Questions to Test**:
 
-Response:
+1. `"lung cancer case study"`
+2. `"Ovarian cancer treatment"`
+3. `"Breast cancer prevention"`
+4. `"Brain cancer case study"`
 
-{
-  "answer": "...",
-  "references": [
-    "Article Title 1",
-    "Article Title 2"
-  ]
-}
+## 💡 Performance Tips
 
+**For Faster Responses**:
+- Use Llama2 model (default)
+- Reduce context size
+- Use fewer reference articles
 
-2. Request:
-{
-  "question": "Ovarian cancer"
-}
+**For Better Accuracy**:
+- Increase similarity threshold
+- Use larger context (800+ chars)
+- Include more reference articles
 
-Response:
-{
-  "answer": "Based on the data provided, there is no information available on the effectiveness of an alkaline lifestyle and diet in treating ovarian cancer. The data focuses primarily on lung cancer and brain cancer, with some information on the preventability of lung cancer through lifestyle and diet changes. Therefore, I must respond with \"Not found in database\" for ovarian cancer.",
-  "references": [
-    "Is There a Cure for Brain Cancer?",
-    "Can You Prevent or Reverse Any Cancerous Condition With Lifestyle and Diet?"
-  ]
-}
-
-3. Request:
-{
-  "question": "Breast cancer"
-}
-
-
-Response:
-{
-  "answer": "Based on the data provided, there is a correlation between eating red meat and an increased risk of breast cancer in premenopausal women. According to the study in the British Medical Journal, each additional serving of red meat per day was associated with a 13% increased risk in breast cancer. Therefore, it can be concluded that eating red meat may increase the risk of breast cancer in these women.\n\nHowever, it is important to note that this study only found an association between red meat consumption and breast cancer, and did not establish a cause-and-effect relationship. Further research is needed to confirm these findings and to better understand the underlying mechanisms.\n\nIn terms of a cure for brain tumors, the answer is more complex. While some people have been able to achieve remission through alternative treatments such as the pH Miracle Alkaline Lifestyle and Diet, as described in your answer, there is currently no definitive cure for brain tumors. Surgery, radiation therapy, and chemotherapy are common treatment options for brain cancer, but their effectiveness can vary depending on the type and location of the tumor.\n\nIt's important to consult with a medical professional for proper diagnosis and treatment if you or someone you know is experiencing symptoms of breast cancer or brain cancer.",
-  "references": [
-    "Eating Meat Increases Risk for Cancer!",
-    "Is There a Cure for Brain Cancer?"
-  ]
-}
-
-
-4. Request:
-{
-  "question": "Brain cancer case study"
-}
-
-
-Response:
-
-{
-  "answer": "Based on the data provided, there is a brain cancer case study of a patient named Ashley who followed the pH Miracle Alkaline Lifestyle and Diet with success. Ashley was 21 years old when she had a seizure while at the movie theater and was rushed to the hospital. Despite being pregnant and married, Ashley elected not to have brain surgery, radiation, or chemotherapy and instead followed the alkaline lifestyle and diet recommended by Robert Young, a research scientist at the pH Miracle Center. Ashley has now been in remission from brain cancer for over 15 years.\n\nNot found in database. There is no additional information provided in the data about other brain cancer case studies or the effectiveness of the pH Miracle Alkaline Lifestyle and Diet in treating brain cancer.",
-  "references": [
-    "Is There a Cure for Brain Cancer?",
-    "Glenn Stone’s pH Miracle Story – Reversing Cancer NOW!"
-  ]
-}
-
-
-# Question ...........
-
-1. { "question": "What is ovarian cancer?" }
-
-
-2. { "question": "Is cancer reversible naturally?" }
-
-
-3. { "question": "Cancer prevention through diet" }
-
-
-4. { "question": "Breast cancer alkaline diet" }
