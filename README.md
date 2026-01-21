@@ -142,3 +142,16 @@ uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 - Use larger context (800+ chars)
 - Include more reference articles
 
+## Folder Structure:
+
+├── backend/
+│   └── main.py          # Main API server with semantic search
+├── database/
+│   └── db.py            # Database connection module
+├── scraper/
+│   └── scrape_and_embed.py  # Web scraper with embedding
+├── .gitignore           # Properly ignores temporary/output files
+├── README.md            # Setup and usage instructions
+├── download_model.py    # Automatic model download/setup
+└── requirements.txt     # Dependencies
+
