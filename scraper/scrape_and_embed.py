@@ -1,16 +1,61 @@
+#!/usr/bin/env python3
+"""
+Web Scraper and Embedding Tool for Dr. Robert Young's Content
+
+This module scrapes articles from multiple sources (case studies and Dr. Robert Young's blog)
+and stores them in a database with vector embeddings for semantic search.
+"""
+
+# Standard library imports
+import time
+import logging
+import warnings
+from urllib.parse import urljoin
+
+# Third-party imports
 import requests
 from bs4 import BeautifulSoup
 from sentence_transformers import SentenceTransformer
-from database.db import get_connection
-import time
-import logging
-from urllib.parse import urljoin
-import warnings
 
+# Local imports
+from database.db import get_connection
+
+# Suppress SSL warnings
 warnings.filterwarnings("ignore")
 
-# ================= CONTENT EXTRACTOR =================
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Configuration constants
+CASE_STUDY_BASE_URL = "https://phoreveryoung.wordpress.com/category/case-studies/"
+DR_YOUNG_BASE_URL = "https://drrobertyoung.com/"
+HEADERS = {"User-Agent": "Mozilla/5.0 (MultiSiteBot/1.0)"}
+MIN_CONTENT_LENGTH = 300  # Minimum content length to store an article
+PAGE_DELAY = 1            # Delay between pages (seconds)
+ARTICLE_DELAY = 2         # Delay between articles (seconds)
+
+# Initialize sentence transformer model for embeddings
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+
 def extract_clean_article_content(soup):
+    """
+    Extract clean article content from a BeautifulSoup object
+    
+    This function attempts to find the main content of an article by trying various
+    common HTML selectors and filtering out unwanted elements.
+    
+    Args:
+        soup (BeautifulSoup): Parsed HTML document
+        
+    Returns:
+        str: Cleaned article content or empty string if no content found
+    """
+    # Try common selectors for article content
     selectors = [
         "article",
         "div.entry-content",
@@ -24,9 +69,11 @@ def extract_clean_article_content(soup):
         if content_root:
             break
 
+    # Return empty if no content container found
     if not content_root:
         return ""
 
+    # Extract text from common content elements
     elements = content_root.find_all(
         ["p", "h1", "h2", "h3", "h4", "li"],
         recursive=True
@@ -36,9 +83,11 @@ def extract_clean_article_content(soup):
     for el in elements:
         text = el.get_text(" ", strip=True)
 
+        # Skip short texts
         if len(text) < 30:
             continue
 
+        # Skip unwanted content sections
         if any(skip in text.lower() for skip in [
             "share this",
             "related",
@@ -69,27 +118,11 @@ def extract_clean_article_content(soup):
 
     return "\n".join(content_parts)
 
-
-# ================= LOGGING =================
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# ================= CONFIG =================
-CASE_STUDY_BASE_URL = "https://phoreveryoung.wordpress.com/category/case-studies/"
-HEADERS = {"User-Agent": "Mozilla/5.0 (MultiSiteBot/1.0)"}
-MIN_CONTENT_LENGTH = 300
-PAGE_DELAY = 1
-ARTICLE_DELAY = 2
-
-model = SentenceTransformer("all-MiniLM-L6-v2")
-
-# ================= DB =================
+# Establish database connection and cursor
 conn = get_connection()
 cur = conn.cursor()
 
+# Create articles table if it doesn't exist
 cur.execute("""
 CREATE TABLE IF NOT EXISTS dr_young_all_articles (
     id INT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -104,32 +137,46 @@ CREATE TABLE IF NOT EXISTS dr_young_all_articles (
 """)
 conn.commit()
 
-# ================= CASE STUDY SCRAPER =================
+
 def scrape_case_studies():
+    """
+    Scrape case studies from phoreveryoung.wordpress.com
+    
+    This function scrapes case study articles from the WordPress site,
+    extracts their content, generates embeddings, and stores them in the database.
+    
+    Returns:
+        int: Number of articles successfully scraped and stored
+    """
     total_articles = 0
     page_url = CASE_STUDY_BASE_URL
 
     logger.info("🚀 CASE STUDY SCRAPER STARTED")
 
     while page_url:
+        # Fetch page content
         response = requests.get(page_url, headers=HEADERS, timeout=15)
         soup = BeautifulSoup(response.text, "html.parser")
 
+        # Find all articles on the page
         articles = soup.find_all("article")
         if not articles:
             break
 
         for art in articles:
+            # Extract article URL
             title_link = art.find("a", href=True)
             if not title_link:
                 continue
 
             url = title_link["href"]
 
+            # Check if article already exists in database
             cur.execute("SELECT 1 FROM dr_young_all_articles WHERE url=%s", (url,))
             if cur.fetchone():
                 continue
 
+            # Fetch detailed article content
             try:
                 detail_res = requests.get(
                     url,
@@ -142,15 +189,19 @@ def scrape_case_studies():
 
             detail_soup = BeautifulSoup(detail_res.text, "html.parser")
 
+            # Extract article title
             title_elem = detail_soup.find("h1")
             title = title_elem.get_text(strip=True) if title_elem else ""
 
+            # Extract and clean article content
             content = extract_clean_article_content(detail_soup)
             if len(content) < MIN_CONTENT_LENGTH:
                 continue
 
+            # Generate embedding for semantic search
             embedding = model.encode(content).tolist()
 
+            # Insert article into database
             cur.execute("""
                 INSERT INTO dr_young_all_articles
                 (title, url, content, embedding)
@@ -161,8 +212,10 @@ def scrape_case_studies():
             total_articles += 1
             logger.info(f"✅ INSERTED CASE STUDY: {title}")
 
+            # Respectful delay between articles
             time.sleep(ARTICLE_DELAY)
 
+        # Get next page URL for pagination
         next_link = soup.find("a", class_="next")
         page_url = urljoin(CASE_STUDY_BASE_URL, next_link["href"]) if next_link else None
         time.sleep(PAGE_DELAY)
@@ -170,8 +223,17 @@ def scrape_case_studies():
     return total_articles
 
 
-# ================= DR ROBERT YOUNG SCRAPER =================
 def scrape_dr_young_all_categories():
+    """
+    Scrape articles from all categories on Dr. Robert Young's website
+    
+    This function scrapes articles from multiple categories on drrobertyoung.com
+    and stores them with embeddings for semantic search.
+    
+    Returns:
+        int: Number of articles successfully scraped and stored
+    """
+    # Define categories to scrape
     categories = [
         "blog",
         "articles",
@@ -185,9 +247,11 @@ def scrape_dr_young_all_categories():
     logger.info("🚀 DR ROBERT YOUNG SCRAPER STARTED")
 
     for category in categories:
+        # Construct category URL
         category_url = f"https://drrobertyoung.com/{category}/"
 
         try:
+            # Fetch category page
             response = requests.get(
                 category_url,
                 headers=HEADERS,
@@ -199,15 +263,19 @@ def scrape_dr_young_all_categories():
 
         soup = BeautifulSoup(response.text, "html.parser")
 
+        # Find all links on the page
         links = soup.find_all("a", href=True)
         post_urls = set()
 
+        # Filter and collect valid post URLs
         for a in links:
             href = a["href"]
 
+            # Only process drrobertyoung.com URLs
             if not href.startswith("https://drrobertyoung.com/"):
                 continue
 
+            # Skip unwanted URLs
             if any(skip in href for skip in [
                 "/wp-content/",
                 "/category/",
@@ -222,17 +290,21 @@ def scrape_dr_young_all_categories():
             ]):
                 continue
 
+            # Heuristic: likely articles have multiple hyphens in URL
             if href.count("-") < 3:
                 continue
 
             post_urls.add(href)
 
+        # Process each collected post URL
         for url in post_urls:
+            # Check if article already exists in database
             cur.execute("SELECT 1 FROM dr_young_all_articles WHERE url=%s", (url,))
             if cur.fetchone():
                 continue
 
             try:
+                # Fetch detailed article content
                 res = requests.get(
                     url,
                     headers=HEADERS,
@@ -245,15 +317,19 @@ def scrape_dr_young_all_categories():
 
             soup = BeautifulSoup(res.text, "html.parser")
 
+            # Extract article title
             title_elem = soup.find("h1")
             title = title_elem.get_text(strip=True) if title_elem else url.split("/")[-1]
 
+            # Extract and clean article content
             content = extract_clean_article_content(soup)
             if len(content) < MIN_CONTENT_LENGTH:
                 continue
 
+            # Generate embedding for semantic search
             embedding = model.encode(content).tolist()
 
+            # Insert article into database
             cur.execute("""
                 INSERT INTO dr_young_all_articles
                 (title, url, content, embedding)
@@ -264,21 +340,27 @@ def scrape_dr_young_all_categories():
             total_articles += 1
             logger.info(f"✅ INSERTED ARTICLE: {title}")
 
+            # Respectful delay between articles
             time.sleep(ARTICLE_DELAY)
 
     return total_articles
 
 
-# ================= MAIN =================
+# Main execution block
 try:
+    # Scrape case studies first
     cs = scrape_case_studies()
-    time.sleep(3)
+    time.sleep(3)  # Brief pause between scraping phases
+    
+    # Then scrape Dr. Robert Young's articles
     dr = scrape_dr_young_all_categories()
 
+    # Log final statistics
     logger.info("🎉 SCRAPING COMPLETED")
     logger.info(f"Case Studies: {cs}")
     logger.info(f"Dr Young Articles: {dr}")
     logger.info(f"TOTAL: {cs + dr}")
 
 finally:
+    # Always close database connection
     conn.close()

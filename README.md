@@ -129,10 +129,6 @@ uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 
 **Sample Questions to Test**:
 
-1. `"lung cancer case study"`
-2. `"Ovarian cancer treatment"`
-3. `"Breast cancer prevention"`
-4. `"Brain cancer case study"`
 
 ## 💡 Performance Tips
 

@@ -1,39 +1,85 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from sentence_transformers import SentenceTransformer
-import numpy as np
-import ast
-import subprocess
-import requests
-import time
+#!/usr/bin/env python3
+"""
+Backend API for Dr. Robert Young's semantic search Q&A system
 
-# Add the project root directory to the Python path
+This module provides a FastAPI application that:
+1. Performs semantic search on scraped blog articles
+2. Generates contextual answers using local LLM
+3. Provides performance timing information
+"""
+
+# Standard library imports
 import sys
 import os
+import time
+import re
+import ast
+import subprocess
+import numpy as np
+
+# Third-party imports
+from fastapi import FastAPI
+from pydantic import BaseModel
+import requests
+from sentence_transformers import SentenceTransformer
+
+# Local imports
+# Add the project root directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.insert(0, project_root)
-
 from database.db import get_connection
 
-app = FastAPI()
+# Initialize FastAPI app
+app = FastAPI(
+    title="Dr. Robert Young Semantic Search API",
+    description="Semantic search and Q&A system for Dr. Robert Young's blog content",
+    version="1.0.0"
+)
 
-# Embedding model (only for vector search)
+# Initialize embedding model for vector search
+# Using all-MiniLM-L6-v2 for efficient sentence embeddings
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 class ChatRequest(BaseModel):
+    """
+    Request model for chat endpoint
+    
+    Attributes:
+        question (str): The user's question to be answered
+    """
     question: str
 
 
 def cosine(a, b):
+    """
+    Calculate cosine similarity between two vectors
+    
+    Args:
+        a (numpy.ndarray): First vector
+        b (numpy.ndarray): Second vector
+        
+    Returns:
+        float: Cosine similarity score between 0 and 1
+    """
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
-import re
 
 def clean_context(text: str) -> str:
+    """
+    Clean and preprocess context text for LLM consumption
+    
+    This function removes unwanted formatting elements that might confuse the LLM.
+    
+    Args:
+        text (str): Raw text content to be cleaned
+        
+    Returns:
+        str: Cleaned text ready for LLM processing
+    """
     # Remove numbered points like "1.", "2)"
-    text = re.sub(r"\n?\s*\d+[\.\)]\s*", " ", text)
+    text = re.sub(r"\n?\s*\d+[\.]\)\s*", " ", text)
 
     # Remove bullet symbols
     text = re.sub(r"[•\-–▪]", " ", text)
@@ -47,6 +93,7 @@ def clean_context(text: str) -> str:
     return text.strip()
 
 
+# List of terms to avoid in responses to maintain neutrality
 FORBIDDEN_TERMS = [
     "ph.d", "m.sc", "d.sc", "naturopath",
     "disseminated", "coagulation", "dic",
@@ -54,10 +101,24 @@ FORBIDDEN_TERMS = [
     "robert", "young"
 ]
 
+
 def sanitize_answer(text: str, question: str) -> str:
+    """
+    Sanitize answer based on question type
+    
+    This function applies specific response patterns for certain types of questions
+    to ensure scientifically accurate and appropriately cautious responses.
+    
+    Args:
+        text (str): Original answer text from LLM
+        question (str): Original user question
+        
+    Returns:
+        str: Potentially modified answer based on question type
+    """
     q = question.lower()
 
-    # Case 1: Study size / proof questions
+    # Case 1: Handle questions about study size or proof
     if any(k in q for k in ["small", "three", "prove", "study"]):
         return (
             "Based on the information provided in the blog context, the study is exploratory "
@@ -67,7 +128,7 @@ def sanitize_answer(text: str, question: str) -> str:
             "definitive conclusions."
         )
 
-    # Case 2: Product difference / comparison questions
+    # Case 2: Handle questions about product differences or comparisons
     if any(k in q for k in ["different", "compare", "market", "other"]):
         return (
             "The blog context does not explicitly provide information about the study size, "
@@ -81,7 +142,13 @@ def sanitize_answer(text: str, question: str) -> str:
 
 def call_llama2(prompt: str) -> str:
     """
-    Call locally running LLaMA-2 via Ollama
+    Call locally running LLM via Ollama
+    
+    Args:
+        prompt (str): The formatted prompt to send to the LLM
+        
+    Returns:
+        str: Generated response from the LLM or error message
     """
     try:
         response = requests.post(
@@ -89,9 +156,15 @@ def call_llama2(prompt: str) -> str:
             json={
                 "model": "llama2:latest",
                 "prompt": prompt,
-                "stream": False
+                "stream": False,
+                "options": {
+                    "temperature": 0.7,      # Control randomness
+                    "top_p": 0.9,           # Nucleus sampling
+                    "repeat_penalty": 1.2,  # Reduce repetition
+                    "num_predict": 100      # Limit response length
+                }
             },
-            timeout=180
+            timeout=180  # 3-minute timeout
         )
 
         # 🔍 DEBUG: raw response
@@ -119,103 +192,104 @@ def call_llama2(prompt: str) -> str:
         return f"LLaMA-2 API error: {str(e)}"
 
 @app.post("/chat")
-def chat(q: ChatRequest):
-    # Start timing
+async def chat(q: ChatRequest):
+    """
+    Main chat endpoint that processes user questions
+    
+    This endpoint performs semantic search on the blog database and generates
+    contextual answers using a local LLM, with detailed timing information.
+    
+    Args:
+        q (ChatRequest): The user's question request
+        
+    Returns:
+        dict: Response containing answer, references, and timing breakdown
+    """
+    # Start timing for performance measurement
     start_time = time.time()
     
-    # 1️⃣ Embed user question
+    # 1️⃣ Embed user question using sentence transformer
     embed_start = time.time()
     query_emb = embed_model.encode(q.question)
     embed_time = time.time() - embed_start
 
-    # 2️⃣ Fetch articles from DB
+    # 2️⃣ Fetch articles from database
     db_start = time.time()
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT title, content, embedding FROM dr_young_all_articles")
+    cur.execute("SELECT title, content, embedding FROM dr_young_all_articles LIMIT 50")
     rows = cur.fetchall()
     db_time = time.time() - db_start
 
+    # Prepare list to store similarity scores
     scored = []
 
-    # 3️⃣ Vector similarity search
+    # 3️⃣ Perform vector similarity search
     search_start = time.time()
     for r in rows:
+        # Convert stored embedding string back to numpy array
         emb = np.array(ast.literal_eval(r["embedding"]))
+        # Calculate cosine similarity with query
         score = cosine(query_emb, emb)
 
-        # Soft keyword boost
+        # Boost score if query terms appear in title
         if any(word in r["title"].lower() for word in q.question.lower().split()):
             score += 0.1
 
+        # Only consider results above threshold
         if score > 0.30:
             scored.append((score, r))
 
-    # top 2 references
-    scored = sorted(scored, key=lambda x: x[0], reverse=True)[:2]
+    # Sort by similarity score and take top result
+    scored = sorted(scored, key=lambda x: x[0], reverse=True)[:1]
     search_time = time.time() - search_start
 
+    # Return if no relevant results found
     if not scored:
         return {
             "answer": "No relevant information found in the available blogs.",
             "references": []
         }
 
-    # 4️⃣ Build context for LLaMA-2
+    # 4️⃣ Build context from top matching articles
     context_start = time.time()
     context_parts = []
-    references = []
+    references = []  # Track source references
 
     for _, art in scored:
+        # Add article title to references
         references.append(art["title"])
-        cleaned = clean_context(art["content"][:800])
+        # Clean and truncate article content
+        cleaned = clean_context(art["content"][:200])
         context_parts.append(cleaned)
 
     print("CONTEXT LENGTH:", len(context_parts))
 
+    # Join all context parts
     context = "\n\n".join(context_parts)
     context_time = time.time() - context_start
 
-    # 5️⃣ Controlled prompt (5–6 bullet points)
+    # 5️⃣ Format prompt for LLM
     prompt = f"""
-You are a scientific research assistant.
+Answer using ONLY the provided context. Be brief and direct.
 
-Answer the user's question strictly and exclusively using only the information explicitly provided in the blog context.
-Do not rely on external knowledge, assumptions, or general background information.
+Context: {context}
 
-Write ONE single concise academic paragraph of no more than four sentences.
-Focus ONLY on the study size, the study’s stated purpose, and its methodological limitations.
-If the study is small, preliminary, or exploratory, clearly state that it cannot establish proof or definitive conclusions
-and that larger, well-controlled studies are required.
+Question: {q.question}
 
-Do NOT introduce or infer any information that is not explicitly stated in the context, including:
-– sample sizes, numerical results, comparisons, or effectiveness claims
-– author credentials, titles, or affiliations
-– disease names, mechanisms, biological pathways, test names, or technical terminology
-– product differentiation, marketing claims, or comparisons with other products
+Answer (1-2 sentences max):"""
 
-Do NOT use promotional, persuasive, optimistic, or speculative language.
-If the context does not contain enough information to fully answer the question, clearly state that the information is not available and explain the limitation based on the study design.
-
-Context:
-{context}
-
-Question:
-{q.question}
-
-Answer:
-"""
-
-    # 6️⃣ Generate answer using LLaMA-2
+    # 6️⃣ Generate answer using local LLM
     llm_start = time.time()
     answer = call_llama2(prompt)
     llm_time = time.time() - llm_start
+    # Clean up extra whitespace in answer
     answer = " ".join(answer.split())
     
-    # Calculate total time
+    # Calculate total processing time
     total_time = time.time() - start_time
     
-    # Print timing information
+    # Print detailed timing breakdown
     print(f"⏱️ TIMING BREAKDOWN:")
     print(f"   Embedding: {embed_time:.2f}s")
     print(f"   Database: {db_time:.2f}s")

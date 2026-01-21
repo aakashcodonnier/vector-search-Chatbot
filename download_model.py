@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
 """
-Model downloader - Automatically downloads required LLM model
+Model Downloader for Dr. Robert Young's Semantic Search System
+
+This module automatically downloads the required LLM model for the semantic search system.
+It checks for Ollama installation and pulls the specified model.
 """
 
+# Standard library imports
 import subprocess
 import sys
 
+
 def check_ollama():
-    """Check if Ollama is installed"""
+    """
+    Check if Ollama is installed and available
+    
+    Returns:
+        bool: True if Ollama is available, False otherwise
+    """
     try:
         result = subprocess.run(["ollama", "--version"], 
                               capture_output=True, text=True)
@@ -15,8 +25,17 @@ def check_ollama():
     except:
         return False
 
-def download_model(model_name="llama2"):  # Llama2 7B by default
-    """Download specified model"""
+
+def download_model(model_name="mistral"):  # Mistral (better quality, faster)
+    """
+    Download the specified LLM model using Ollama
+    
+    Args:
+        model_name (str): Name of the model to download
+        
+    Returns:
+        bool: True if download successful, False otherwise
+    """
     print(f"📥 Downloading {model_name} model...")
     print("This may take 10-15 minutes depending on your internet speed.")
     
@@ -38,12 +57,22 @@ def download_model(model_name="llama2"):  # Llama2 7B by default
         print(f"❌ Error: {e}")
         return False
 
+
 def main():
+    """
+    Main function to handle the model download process
+    
+    This function checks for Ollama, presents model options to the user,
+    and downloads the selected model.
+    
+    Returns:
+        bool: True if download successful, False otherwise
+    """
     print("=" * 40)
     print("🤖 MODEL DOWNLOADER")
     print("=" * 40)
     
-    # Check Ollama
+    # Check if Ollama is installed
     if not check_ollama():
         print("❌ Ollama not found!")
         print("Please install Ollama first from: https://ollama.ai")
@@ -51,22 +80,22 @@ def main():
     
     print("✅ Ollama found")
     
-    # Download model
-    model = "llama2"  # Llama2 7B (7B params)
+    # Set default model
+    model = "mistral"  # Mistral (better quality, faster)
     
-    # Optional: Let user choose model
+    # Present model options to user
     print("\nAvailable models:")
     print("1. llama2 (default, quality - 7B params)")
-    print("2. mistral (balanced - 7B params)")
+    print("2. mistral (recommended - better quality, faster)")
     print("3. tinyllama (fastest - 1.1B params)")
     
-    choice = input("\nChoose model (1-3) or press Enter for default: ").strip()
+    choice = input("\nChoose model (1-3) or press Enter for mistral (recommended): ").strip()
     
-    if choice == "2":
-        model = "mistral"
+    if choice == "1":
+        model = "llama2"
     elif choice == "3":
         model = "tinyllama"
-    # else default to llama2
+    # else default to mistral
     
     print(f"\nSelected model: {model}")
     
@@ -78,6 +107,7 @@ def main():
         print("\n⚠️  You can manually download later:")
         print(f"   ollama pull {model}")
         return False
+
 
 if __name__ == "__main__":
     success = main()
