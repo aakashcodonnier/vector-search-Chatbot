@@ -9,6 +9,8 @@ It checks for Ollama installation and pulls the specified model.
 # Standard library imports
 import subprocess
 import sys
+import platform
+import webbrowser
 
 
 def check_ollama():
@@ -58,6 +60,52 @@ def download_model(model_name="mistral"):  # Mistral (better quality, faster)
         return False
 
 
+def print_installation_guide():
+    """
+    Print detailed installation guide for Ollama
+    """
+    print("\n" + "=" * 50)
+    print("🔧 OLLAMA INSTALLATION REQUIRED")
+    print("=" * 50)
+    print("\nTo use this semantic search system, you need to install Ollama first.")
+    
+    # Detect operating system
+    system = platform.system().lower()
+    if system == "windows":
+        print("\n🖥️  WINDOWS USERS:")
+        print("1. Visit: https://ollama.ai/download/windows")
+        print("2. Download the Windows installer (.exe file)")
+        print("3. Run the installer as Administrator")
+        print("4. Follow the setup wizard")
+    elif system == "darwin":
+        print("\n🍎 MAC USERS:")
+        print("1. Visit: https://ollama.ai/download/mac")
+        print("2. Download the macOS installer")
+        print("3. Open the downloaded file and drag Ollama to Applications")
+    else:
+        print("\n🐧 LINUX USERS:")
+        print("1. Visit: https://ollama.ai/download/linux")
+        print("2. Follow the curl installation command provided")
+    
+    print("\n📋 GENERAL STEPS:")
+    print("4. After installation, restart your terminal/command prompt")
+    print("5. Run this script again: python download_model.py")
+    
+    print("\n💡 TIP: After installing Ollama, verify it's working:")
+    print("   ollama --version")
+    
+    # Offer to open download page
+    try:
+        choice = input("\nWould you like me to open the Ollama download page? (y/n): ").strip().lower()
+        if choice in ['y', 'yes']:
+            webbrowser.open("https://ollama.ai/download")
+            print("✅ Opening Ollama download page in your browser...")
+    except:
+        pass  # Silently continue if webbrowser fails
+    
+    print("\n" + "=" * 50)
+
+
 def main():
     """
     Main function to handle the model download process
@@ -74,11 +122,12 @@ def main():
     
     # Check if Ollama is installed
     if not check_ollama():
-        print("❌ Ollama not found!")
-        print("Please install Ollama first from: https://ollama.ai")
+        print("❌ OLLAMA NOT FOUND")
+        print("This system requires Ollama to run local LLM models.")
+        print_installation_guide()
         return False
     
-    print("✅ Ollama found")
+    print("✅ Ollama found and ready!")
     
     # Set default model
     model = "mistral"  # Mistral (better quality, faster)

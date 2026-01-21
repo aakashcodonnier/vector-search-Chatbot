@@ -58,9 +58,20 @@ config.yaml
 
 # Model cache (Ollama / LLMs)
 
-ollama/
-models/
+# Ollama models are stored globally, not in project
+
 
 # Logs
 
 logs/
+
+
+# Output files from scraping
+
+case_study_page.html
+blog_page.html
+
+
+# Configuration files with sensitive info
+
+config.py
