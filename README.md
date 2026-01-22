@@ -155,3 +155,22 @@ uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ├── download_model.py    # Automatic model download/setup
 └── requirements.txt     # Dependencies
 
+## Question:
+
+1. How can such a small three-person study prove that MasterPeace Zeolite Z truly removes toxins from the human body?
+
+2. What makes the MasterPeace Zeolite Z formula different from other detox or zeolite products already on the market?
+
+3. If people are constantly exposed to environmental and nano-scale toxins, how can they maintain low levels of these compounds long-term after using the product?
+
+4. What exactly is fog water contamination and why should I care about it?
+
+5. How does MasterPeace Zeolite Z work to protect me from these fog-borne or aerial spraying substances?
+
+6. If I use MasterPeace Zeolite Z, does that mean I don’t need to worry about aerial spraying or fog-water pollution?
+
+7. Why should I be concerned about wireless technologies like 5G or 6G and how they affect my health?
+
+8. What practical steps can I take to protect myself from the possible harmful effects of RF-EMFs?
+
+9. Does detoxification really help in dealing with wireless radiation and nano-material exposures, and if so, how?
