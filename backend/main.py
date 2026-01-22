@@ -16,6 +16,7 @@ import re
 import ast
 import subprocess
 import numpy as np
+from collections import deque
 
 # Third-party imports
 from fastapi import FastAPI
@@ -41,6 +42,30 @@ app = FastAPI(
 # Using all-MiniLM-L6-v2 for efficient sentence embeddings
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
+# Session-based conversation memory (stores last 5 interactions per conversation)
+conversation_memory = {}
+
+def get_conversation_history(conversation_id: str):
+    """Get conversation history for given ID"""
+    if conversation_id not in conversation_memory:
+        conversation_memory[conversation_id] = deque(maxlen=5)
+    return conversation_memory[conversation_id]
+
+def add_to_conversation_history(conversation_id: str, question: str, answer: str):
+    """Add interaction to conversation history"""
+    history = get_conversation_history(conversation_id)
+    history.append({
+        "question": question,
+        "answer": answer,
+        "timestamp": time.time()
+    })
+    
+    # Log the addition
+    print(f"💾 SAVED TO SESSION [{conversation_id}]:")
+    print(f"   Question: {question[:60]}...")
+    print(f"   Answer: {answer[:60]}...")
+    print(f"   Total interactions: {len(history)}")
+
 
 class ChatRequest(BaseModel):
     """
@@ -48,8 +73,10 @@ class ChatRequest(BaseModel):
     
     Attributes:
         question (str): The user's question to be answered
+        conversation_id (str): Optional conversation identifier to maintain context
     """
     question: str
+    conversation_id: str = "default"
 
 
 def cosine(a, b):
@@ -194,13 +221,13 @@ def call_llama2(prompt: str) -> str:
 @app.post("/chat")
 async def chat(q: ChatRequest):
     """
-    Main chat endpoint that processes user questions
+    Main chat endpoint that processes user questions with session-based memory
     
-    This endpoint performs semantic search on the blog database and generates
-    contextual answers using a local LLM, with detailed timing information.
+    This endpoint performs semantic search on the blog database, maintains conversation
+    context, and generates contextual answers using a local LLM.
     
     Args:
-        q (ChatRequest): The user's question request
+        q (ChatRequest): The user's question request with optional conversation ID
         
     Returns:
         dict: Response containing answer, references, and timing breakdown
@@ -208,6 +235,23 @@ async def chat(q: ChatRequest):
     # Start timing for performance measurement
     start_time = time.time()
     
+    # Get conversation history
+    history = get_conversation_history(q.conversation_id)
+    
+    # Log conversation tracking
+    print(f"🔄 CONVERSATION SESSION: {q.conversation_id}")
+    print(f"📊 HISTORY LENGTH: {len(history)} interactions")
+    
+    # Build context from conversation history
+    history_context = ""
+    if history:
+        history_lines = []
+        for item in history:
+            history_lines.append(f"Previous question: {item['question']}")
+            history_lines.append(f"Previous answer: {item['answer']}")
+        history_context = "\n".join(history_lines) + "\n"
+        print(f"📝 CONTEXT LINES ADDED: {len(history_lines)}")
+
     # 1️⃣ Embed user question using sentence transformer
     embed_start = time.time()
     query_emb = embed_model.encode(q.question)
@@ -269,22 +313,23 @@ async def chat(q: ChatRequest):
     context = "\n\n".join(context_parts)
     context_time = time.time() - context_start
 
-    # 5️⃣ Format prompt for LLM
+    # 5️⃣ Format prompt for LLM with conversation context
     prompt = f"""
-Answer using ONLY the provided context. Be brief and direct.
-
-Context: {context}
+{history_context}Context: {context}
 
 Question: {q.question}
 
 Answer (1-2 sentences max):"""
-
+    
     # 6️⃣ Generate answer using local LLM
     llm_start = time.time()
     answer = call_llama2(prompt)
     llm_time = time.time() - llm_start
     # Clean up extra whitespace in answer
     answer = " ".join(answer.split())
+    
+    # Add this interaction to conversation history
+    add_to_conversation_history(q.conversation_id, q.question, answer)
     
     # Calculate total processing time
     total_time = time.time() - start_time
