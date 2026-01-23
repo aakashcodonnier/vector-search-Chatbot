@@ -3,90 +3,58 @@
 Backend API for Dr. Robert Young's semantic search Q&A system
 
 This module provides a FastAPI application that:
-1. Performs semantic search on scraped blog articles using vector embeddings
-2. Generates contextual answers using local LLM via Ollama streaming
-3. Maintains session-based conversation memory for context awareness
-4. Provides detailed performance timing information for monitoring
-5. Handles fallback responses gracefully when no relevant content found
-
-Architecture Overview:
-- Uses sentence-transformers for vector embeddings
-- MySQL database stores articles with precomputed embeddings
-- FastAPI serves REST API endpoints
-- Ollama provides local LLM inference with streaming capability
-- Session-based memory preserves conversation context across requests
+1. Performs semantic search on scraped blog articles
+2. Generates contextual answers using local LLM
+3. Provides performance timing information
 """
 
 # Standard library imports
-import sys          # System-specific parameters and functions
-import os           # Operating system interface
-import time         # Time access and conversions
-import re           # Regular expression operations
-import ast          # Abstract Syntax Tree processing
-import json         # JSON encoder and decoder
-import numpy as np  # Numerical computing library
-from collections import deque  # Double-ended queue for efficient memory management
+import sys
+import os
+import time
+import re
+import ast
+import json
+import subprocess
+import numpy as np
+from collections import deque
 
 # Third-party imports
-from fastapi import FastAPI                    # Web framework for API development
-from fastapi.responses import StreamingResponse # Streaming response handler
-from pydantic import BaseModel                 # Data validation and settings management
-import requests                                # HTTP library for API calls
-from sentence_transformers import SentenceTransformer  # Pre-trained transformer models
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+import requests
+from sentence_transformers import SentenceTransformer
 
 # Local imports
-# Add the project root directory to the Python path for module resolution
+# Add the project root directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
 sys.path.insert(0, project_root)
-from database.db import get_connection  # Database connection utility
+from database.db import get_connection
 
-# Initialize FastAPI app with metadata for API documentation
+# Initialize FastAPI app
 app = FastAPI(
     title="Dr. Robert Young Semantic Search API",
-    description="Semantic search and Q&A system for Dr. Robert Young's blog content with session memory and streaming responses",
+    description="Semantic search and Q&A system for Dr. Robert Young's blog content",
     version="1.0.0"
 )
 
-# Initialize embedding model for vector search operations
-# Using all-MiniLM-L6-v2 for efficient sentence embeddings (22.7M parameters)
-# This model provides good balance between speed and accuracy for semantic similarity
+# Initialize embedding model for vector search
+# Using all-MiniLM-L6-v2 for efficient sentence embeddings
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 
-# Session-based conversation memory storage
-# Dictionary mapping conversation_id to deque of recent interactions
-# Each deque maintains last 5 interactions for optimal memory usage and context relevance
+# Session-based conversation memory (stores last 5 interactions per conversation)
 conversation_memory = {}
 
 def get_conversation_history(conversation_id: str):
-    """
-    Get conversation history for given conversation ID
-    
-    This function retrieves or initializes conversation history for a specific session.
-    Uses deque with maxlen=5 to automatically manage memory and keep only recent interactions.
-    
-    Args:
-        conversation_id (str): Unique identifier for the conversation session
-        
-    Returns:
-        deque: Double-ended queue containing conversation history items
-    """
+    """Get conversation history for given ID"""
     if conversation_id not in conversation_memory:
         conversation_memory[conversation_id] = deque(maxlen=5)
     return conversation_memory[conversation_id]
 
 def add_to_conversation_history(conversation_id: str, question: str, answer: str):
-    """
-    Add interaction to conversation history for context preservation
-    
-    This function stores question-answer pairs in the session memory to enable
-    contextual follow-up questions and maintain conversation coherence.
-    
-    Args:
-        conversation_id (str): Unique identifier for the conversation session
-        question (str): User's question text
-        answer (str): Generated answer text from the LLM
-    """
+    """Add interaction to conversation history"""
     history = get_conversation_history(conversation_id)
     history.append({
         "question": question,
@@ -94,50 +62,44 @@ def add_to_conversation_history(conversation_id: str, question: str, answer: str
         "timestamp": time.time()
     })
     
-    # Log the addition for debugging and monitoring purposes
+    # Log the addition
     print(f"💾 SAVED TO SESSION [{conversation_id}]:")
     print(f"   Question: {question[:60]}...")
     print(f"   Answer: {answer[:60]}...")
     print(f"   Total interactions: {len(history)}")
 
+
 class ChatRequest(BaseModel):
     """
-    Request model for chat endpoint with validation and defaults
-    
-    This Pydantic model defines the expected structure for incoming chat requests
-    and provides automatic validation and serialization.
+    Request model for chat endpoint
     
     Attributes:
-        question (str): The user's question to be answered (required)
-        conversation_id (str): Optional conversation identifier to maintain context (defaults to "default")
+        question (str): The user's question to be answered
+        conversation_id (str): Optional conversation identifier to maintain context
     """
     question: str
     conversation_id: str = "default"
 
+
 def cosine(a, b):
     """
-    Calculate cosine similarity between two vectors for semantic comparison
-    
-    Cosine similarity measures the cosine of the angle between two vectors,
-    providing a normalized similarity score between 0 (completely different) 
-    and 1 (identical) regardless of vector magnitude.
+    Calculate cosine similarity between two vectors
     
     Args:
-        a (numpy.ndarray): First vector (typically query embedding)
-        b (numpy.ndarray): Second vector (typically document embedding)
+        a (numpy.ndarray): First vector
+        b (numpy.ndarray): Second vector
         
     Returns:
         float: Cosine similarity score between 0 and 1
     """
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
+
 def clean_context(text: str) -> str:
     """
-    Clean and preprocess context text for optimal LLM consumption
+    Clean and preprocess context text for LLM consumption
     
-    This function removes unwanted formatting elements, reference sections,
-    and other content that might confuse or distract the language model
-    during response generation.
+    This function removes unwanted formatting elements that might confuse the LLM.
     
     Args:
         text (str): Raw text content to be cleaned
@@ -145,13 +107,13 @@ def clean_context(text: str) -> str:
     Returns:
         str: Cleaned text ready for LLM processing
     """
-    # Remove numbered points like "1.", "2)" that might interfere with LLM processing
+    # Remove numbered points like "1.", "2)"
     text = re.sub(r"\n?\s*\d+[\.]\)\s*", " ", text)
 
-    # Remove bullet symbols and list markers that add no semantic value
+    # Remove bullet symbols
     text = re.sub(r"[•\-–▪]", " ", text)
 
-    # Remove reference/link sections that typically contain URLs and citations
+    # Remove reference / links section
     stop_words = ["References", "REFERENCES", "http", "www."]
     for w in stop_words:
         if w in text:
@@ -159,33 +121,33 @@ def clean_context(text: str) -> str:
 
     return text.strip()
 
-# List of terms to avoid in responses to maintain neutrality and scientific accuracy
+
+# List of terms to avoid in responses to maintain neutrality
 FORBIDDEN_TERMS = [
-    "ph.d", "m.sc", "d.sc", "naturopath",      # Academic credentials
-    "disseminated", "coagulation", "dic",       # Medical terminology
-    "pathology", "mechanism", "theoretical",    # Technical/scientific terms
-    "robert", "young"                           # Author names (avoid self-referential responses)
+    "ph.d", "m.sc", "d.sc", "naturopath",
+    "disseminated", "coagulation", "dic",
+    "pathology", "mechanism", "theoretical",
+    "robert", "young"
 ]
+
 
 def sanitize_answer(text: str, question: str) -> str:
     """
-    Sanitize answer based on question type for scientific accuracy and caution
+    Sanitize answer based on question type
     
     This function applies specific response patterns for certain types of questions
-    to ensure scientifically accurate and appropriately cautious responses, particularly
-    for questions about study validity, product comparisons, and health claims.
+    to ensure scientifically accurate and appropriately cautious responses.
     
     Args:
         text (str): Original answer text from LLM
         question (str): Original user question
         
     Returns:
-        str: Potentially modified answer based on question type and safety considerations
+        str: Potentially modified answer based on question type
     """
     q = question.lower()
 
-    # Case 1: Handle questions about study size or proof requirements
-    # Ensures scientifically accurate responses about small study limitations
+    # Case 1: Handle questions about study size or proof
     if any(k in q for k in ["small", "three", "prove", "study"]):
         return (
             "Based on the information provided in the blog context, the study is exploratory "
@@ -195,8 +157,7 @@ def sanitize_answer(text: str, question: str) -> str:
             "definitive conclusions."
         )
 
-    # Case 2: Handle questions about product differences or market comparisons
-    # Ensures appropriate caution when comparing products or making claims
+    # Case 2: Handle questions about product differences or comparisons
     if any(k in q for k in ["different", "compare", "market", "other"]):
         return (
             "The blog context does not explicitly provide information about the study size, "
@@ -206,6 +167,7 @@ def sanitize_answer(text: str, question: str) -> str:
         )
 
     return text
+
 
 def call_llama2_stream(prompt: str):
     """
@@ -277,7 +239,7 @@ async def chat(q: ChatRequest):
         q (ChatRequest): The user's question request with optional conversation ID
         
     Returns:
-        dict: Response containing answer, references, and timing breakdown
+        StreamingResponse: Streaming response containing answer and references
     """
     # Start timing for performance measurement
     start_time = time.time()
@@ -347,18 +309,12 @@ async def chat(q: ChatRequest):
             "• Stay informed about ongoing research"
         )
         
-        return {
-            "answer": general_answer,
-            "references": ["General health guidance"],
-            "timing": {
-                "embedding": round(embed_time, 2),
-                "database": round(db_time, 2),
-                "search": round(search_time, 2),
-                "context_building": 0.00,
-                "llm_generation": 0.00,
-                "total": round(time.time() - start_time, 2)
-            }
-        }
+        def stream_general_response():
+            yield general_answer
+            yield "\n\nReferences:\n"
+            yield "1. General health guidance\n"
+        
+        return StreamingResponse(stream_general_response(), media_type="text/plain")
 
     # 4️⃣ Build context from top matching articles
     context_start = time.time()
@@ -394,6 +350,11 @@ Answer (1-2 sentences max):"""
         for chunk in call_llama2_stream(prompt):
             full_answer += chunk
             yield chunk
+
+        # Add references after the main answer
+        yield "\n\nReferences:\n"
+        for i, ref in enumerate(references, 1):
+            yield f"{i}. {ref}\n"
 
         # Save conversation AFTER streaming finishes
         clean_answer = " ".join(full_answer.split())
