@@ -4,69 +4,49 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dr. Robert Young Semantic Search</title>
+
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
         }
-        
+
         .container {
             max-width: 800px;
-            margin: 0 auto;
+            margin: auto;
             background: white;
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.2);
             overflow: hidden;
         }
-        
+
         .header {
             background: #4a5568;
             color: white;
             padding: 25px;
             text-align: center;
         }
-        
-        .header h1 {
-            font-size: 2rem;
-            margin-bottom: 10px;
-        }
-        
-        .header p {
-            opacity: 0.9;
-        }
-        
-        .chat-container {
-            padding: 25px;
-        }
-        
+
+        .chat-container { padding: 25px; }
+
         .input-area {
             display: flex;
             gap: 10px;
-            margin-bottom: 20px;
+            margin-top: 15px;
         }
-        
+
         #question {
             flex: 1;
             padding: 15px;
-            border: 2px solid #e2e8f0;
             border-radius: 8px;
+            border: 2px solid #e2e8f0;
             font-size: 16px;
-            outline: none;
-            transition: border-color 0.3s;
         }
-        
-        #question:focus {
-            border-color: #667eea;
-        }
-        
+
         #send-btn {
             padding: 15px 25px;
             background: #667eea;
@@ -74,20 +54,13 @@
             border: none;
             border-radius: 8px;
             cursor: pointer;
-            font-size: 16px;
             font-weight: bold;
-            transition: background 0.3s;
         }
-        
-        #send-btn:hover {
-            background: #5a6fd8;
-        }
-        
+
         #send-btn:disabled {
             background: #a0aec0;
-            cursor: not-allowed;
         }
-        
+
         .messages {
             height: 400px;
             overflow-y: auto;
@@ -95,182 +68,139 @@
             border-radius: 8px;
             padding: 15px;
             background: #f8fafc;
-            margin-bottom: 20px;
         }
-        
+
         .message {
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             padding: 12px;
             border-radius: 8px;
-            animation: fadeIn 0.3s;
         }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
+
         .user-message {
             background: #667eea;
             color: white;
             margin-left: 20%;
         }
-        
+
         .bot-message {
             background: white;
             border: 1px solid #e2e8f0;
             margin-right: 20%;
+            white-space: pre-wrap;
         }
-        
-        .references {
-            margin-top: 10px;
-            font-size: 12px;
-            color: #4a5568;
-            border-top: 1px dashed #cbd5e0;
-            padding-top: 8px;
-        }
-        
+
         .typing {
             color: #667eea;
             font-style: italic;
         }
-        
+
         .error {
-            background: #fed7d7 !important;
-            color: #c53030 !important;
-            border: 1px solid #feb2b2 !important;
+            background: #fed7d7;
+            color: #c53030;
         }
     </style>
 </head>
+
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🔍 Dr. Robert Young Semantic Search</h1>
-            <p>Ask questions about health, wellness, and Dr. Young's research</p>
-        </div>
-        
-        <div class="chat-container">
-            <div class="messages" id="messages">
-                <div class="message bot-message">
-                    Hello! I'm your research assistant. Ask me anything about Dr. Robert Young's articles and case studies.
-                </div>
-            </div>
-            
-            <div class="input-area">
-                <input type="text" id="question" placeholder="Ask your question here..." autocomplete="off">
-                <button id="send-btn">Send</button>
-            </div>
-        </div>
+<div class="container">
+    <div class="header">
+        <h1>🔍 Dr. Robert Young Semantic Search</h1>
+        <p>Ask questions about research & case studies</p>
     </div>
 
-    <script>
-        const messagesDiv = document.getElementById('messages');
-        const questionInput = document.getElementById('question');
-        const sendBtn = document.getElementById('send-btn');
-        
-        // Generate unique conversation ID for this session
-        const conversationId = 'conv_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        
-        // Send message function
-        async function sendMessage() {
-            const question = questionInput.value.trim();
-            if (!question) return;
-            
-            // Add user message
-            addMessage(question, 'user');
-            questionInput.value = '';
-            
-            // Disable input while processing
-            sendBtn.disabled = true;
-            questionInput.disabled = true;
-            
-            // Add typing indicator
-            const typingId = addTypingIndicator();
-            
-            try {
-                // Call backend API with conversation ID
-                const response = await fetch('/api/chat', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        question: question,
-                        conversation_id: conversationId
-                    })
-                });
-                
-                // Remove typing indicator
-                removeTypingIndicator(typingId);
-                
-                if (response.ok) {
-                    const data = await response.json();
-                    addMessage(data.answer, 'bot', data.references, data.timing);
-                } else {
-                    addMessage('Sorry, I encountered an error. Please try again.', 'bot', null, null, true);
-                }
-            } catch (error) {
-                removeTypingIndicator(typingId);
-                addMessage('Cannot connect to the server. Please make sure the backend is running.', 'bot', null, null, true);
-                console.error('Error:', error);
-            } finally {
-                // Re-enable input
-                sendBtn.disabled = false;
-                questionInput.disabled = false;
-                questionInput.focus();
-            }
-        }
-        
-        // Add message to chat
-        function addMessage(text, sender, references = null, timing = null, isError = false) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${sender}-message`;
-            if (isError) messageDiv.classList.add('error');
-            
-            let content = `<div>${text}</div>`;
-            
-            // Add references if available
-            if (references && references.length > 0) {
-                content += `<div class="references"><strong>References:</strong><br>${references.join('<br>')}</div>`;
-            }
-            
-            messageDiv.innerHTML = content;
-            messagesDiv.appendChild(messageDiv);
+    <div class="chat-container">
+        <div class="messages" id="messages">
+            <div class="message bot-message">
+                Hello! Ask me anything about Dr. Robert Young’s research.
+            </div>
+        </div>
+
+        <div class="input-area">
+            <input id="question" placeholder="Ask your question..." />
+            <button id="send-btn">Send</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const messagesDiv = document.getElementById("messages");
+const questionInput = document.getElementById("question");
+const sendBtn = document.getElementById("send-btn");
+
+const conversationId = "conv_" + Date.now();
+
+/**
+ * Add a new message to the chat display
+ * @param {string} text - Message content
+ * @param {string} sender - "user" or "bot"
+ * @returns {HTMLElement} The created message element
+ */
+function addMessage(text, sender) {
+    const div = document.createElement("div");
+    div.className = `message ${sender}-message`;
+    div.textContent = text;
+    messagesDiv.appendChild(div);
+    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    return div;
+}
+
+/**
+ * Handle sending user questions and receiving streaming responses
+ * This function manages the complete chat interaction cycle:
+ * 1. Collect user input
+ * 2. Display user message
+ * 3. Show thinking indicator
+ * 4. Stream response from backend
+ * 5. Handle errors gracefully
+ */
+async function sendMessage() {
+    const question = questionInput.value.trim();
+    if (!question) return;
+
+    addMessage(question, "user");
+    questionInput.value = "";
+
+    sendBtn.disabled = true;
+    questionInput.disabled = true;
+
+    const botDiv = addMessage("Thinking...\n", "bot");
+
+    try {
+        const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                question: question,
+                conversation_id: conversationId
+            })
+        });
+
+        botDiv.textContent = "";
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            botDiv.textContent += decoder.decode(value);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
-        
-        // Add typing indicator
-        function addTypingIndicator() {
-            const typingDiv = document.createElement('div');
-            typingDiv.id = 'typing-indicator';
-            typingDiv.className = 'message bot-message typing';
-            typingDiv.textContent = 'Thinking...';
-            messagesDiv.appendChild(typingDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-            return 'typing-indicator';
-        }
-        
-        // Remove typing indicator
-        function removeTypingIndicator(id) {
-            const typingElement = document.getElementById(id);
-            if (typingElement) {
-                typingElement.remove();
-            }
-        }
-        
-        // Event listeners
-        sendBtn.addEventListener('click', sendMessage);
-        
-        questionInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                sendMessage();
-            }
-        });
-        
-        // Focus input on load
-        window.addEventListener('load', () => {
-            questionInput.focus();
-        });
-    </script>
+
+    } catch (err) {
+        botDiv.textContent = "❌ Server error. Backend Start your Backend Then Ask a Question.";
+        botDiv.classList.add("error");
+        console.error(err);
+    }
+
+    sendBtn.disabled = false;
+    questionInput.disabled = false;
+    questionInput.focus();
+}
+
+sendBtn.addEventListener("click", sendMessage);
+questionInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") sendMessage();
+});
+</script>
 </body>
 </html>

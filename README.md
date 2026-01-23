@@ -1,7 +1,29 @@
 
 # Blog QA System
 
-A question-answering system that scrapes blog posts and answers questions using LLM.
+A question-answering system that scrapes blog posts and answers questions using LLM with advanced features.
+
+## Key Features
+
+### 🧠 Semantic Search
+- Vector-based similarity search using sentence transformers
+- Contextual understanding of user queries
+- Fast and accurate article matching
+
+### 💬 Conversational AI
+- Session-based memory for context awareness
+- Follow-up question support with conversation history
+- Streaming responses for real-time interaction
+
+### ⚡ Performance Optimized
+- Fast embedding generation with all-MiniLM-L6-v2
+- Efficient database queries with indexing
+- Streaming LLM responses for immediate feedback
+
+### 🔧 Developer Friendly
+- Modular architecture with clear separation of concerns
+- Comprehensive logging and error handling
+- Easy setup with automated model downloading
 
 
 

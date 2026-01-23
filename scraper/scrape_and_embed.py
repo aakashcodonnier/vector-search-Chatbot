@@ -4,41 +4,60 @@ Web Scraper and Embedding Tool for Dr. Robert Young's Content
 
 This module scrapes articles from multiple sources (case studies and Dr. Robert Young's blog)
 and stores them in a database with vector embeddings for semantic search.
+
+Features:
+- Scrapes content from WordPress blog and case studies
+- Extracts clean article content with noise filtering
+- Generates semantic embeddings using sentence-transformers
+- Stores structured data in MySQL database
+- Handles rate limiting and respectful scraping practices
+- Supports multiple content sources and categories
+
+Scraping Sources:
+1. Case Studies: https://phoreveryoung.wordpress.com/category/case-studies/
+2. Dr. Robert Young Blog Categories: Multiple categories from drrobertyoung.com
+
+Data Processing Pipeline:
+1. Extract raw HTML content
+2. Clean and filter relevant text
+3. Generate vector embeddings
+4. Store in database with metadata
 """
 
 # Standard library imports
-import time
-import logging
-import warnings
-from urllib.parse import urljoin
+import time           # Timing and delays for respectful scraping
+import logging        # Logging for monitoring and debugging
+import warnings       # Warning suppression for cleaner output
+from urllib.parse import urljoin  # URL joining utilities
 
 # Third-party imports
-import requests
-from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer
+import requests                    # HTTP requests for web scraping
+from bs4 import BeautifulSoup     # HTML parsing and content extraction
+from sentence_transformers import SentenceTransformer  # Vector embedding generation
 
 # Local imports
-from database.db import get_connection
+from database.db import get_connection  # Database connection utility
 
-# Suppress SSL warnings
+# Suppress SSL warnings for cleaner output during scraping
 warnings.filterwarnings("ignore")
 
-# Configure logging
+# Configure logging for detailed progress tracking
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Configuration constants
+# Configuration constants for scraping behavior
 CASE_STUDY_BASE_URL = "https://phoreveryoung.wordpress.com/category/case-studies/"
 DR_YOUNG_BASE_URL = "https://drrobertyoung.com/"
-HEADERS = {"User-Agent": "Mozilla/5.0 (MultiSiteBot/1.0)"}
-MIN_CONTENT_LENGTH = 300  # Minimum content length to store an article
-PAGE_DELAY = 1            # Delay between pages (seconds)
-ARTICLE_DELAY = 2         # Delay between articles (seconds)
+HEADERS = {"User-Agent": "Mozilla/5.0 (MultiSiteBot/1.0)"}  # Identify bot properly
+MIN_CONTENT_LENGTH = 300  # Minimum content length to store an article (characters)
+PAGE_DELAY = 1            # Delay between pages (seconds) for rate limiting
+ARTICLE_DELAY = 2         # Delay between articles (seconds) for respectful scraping
 
 # Initialize sentence transformer model for embeddings
+# Using all-MiniLM-L6-v2 for efficient sentence embeddings (22.7M parameters)
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
@@ -47,7 +66,8 @@ def extract_clean_article_content(soup):
     Extract clean article content from a BeautifulSoup object
     
     This function attempts to find the main content of an article by trying various
-    common HTML selectors and filtering out unwanted elements.
+    common HTML selectors and filtering out unwanted elements like navigation,
+    advertisements, and footer content.
     
     Args:
         soup (BeautifulSoup): Parsed HTML document
@@ -55,12 +75,12 @@ def extract_clean_article_content(soup):
     Returns:
         str: Cleaned article content or empty string if no content found
     """
-    # Try common selectors for article content
+    # Try common selectors for article content in order of preference
     selectors = [
-        "article",
-        "div.entry-content",
-        "div.elementor-widget-theme-post-content",
-        "main"
+        "article",                           # Standard article tag
+        "div.entry-content",                 # WordPress entry content
+        "div.elementor-widget-theme-post-content",  # Elementor theme content
+        "main"                               # Main content area
     ]
 
     content_root = None
@@ -75,7 +95,7 @@ def extract_clean_article_content(soup):
 
     # Extract text from common content elements
     elements = content_root.find_all(
-        ["p", "h1", "h2", "h3", "h4", "li"],
+        ["p", "h1", "h2", "h3", "h4", "li"],  # Text-containing elements
         recursive=True
     )
 
@@ -83,34 +103,17 @@ def extract_clean_article_content(soup):
     for el in elements:
         text = el.get_text(" ", strip=True)
 
-        # Skip short texts
+        # Skip short texts that are likely navigation or formatting
         if len(text) < 30:
             continue
 
-        # Skip unwanted content sections
+        # Skip unwanted content sections commonly found in footers/menus
         if any(skip in text.lower() for skip in [
-            "share this",
-            "related",
-            "author",
-            "posted on",
-            "subscribe",
-            "navigation",
-            "footer",
-            "copyright",
-            "all rights reserved",
-            "privacy policy",
-            "terms of service",
-            "cookie",
-            "menu",
-            "search",
-            "leave a comment",
-            "reply",
-            "previous post",
-            "next post",
-            "facebook",
-            "twitter",
-            "linkedin",
-            "email"
+            "share this", "related", "author", "posted on", "subscribe",
+            "navigation", "footer", "copyright", "all rights reserved",
+            "privacy policy", "terms of service", "cookie", "menu",
+            "search", "leave a comment", "reply", "previous post",
+            "next post", "facebook", "twitter", "linkedin", "email"
         ]):
             continue
 
