@@ -227,6 +227,63 @@ def call_llama2_stream(prompt: str):
         # Handle streaming errors gracefully
         yield f"\n[LLM ERROR]: {str(e)}"
 
+
+def call_llama2_stream_direct(prompt: str):
+    """
+    Call locally running LLM via Ollama with streaming capability for direct responses
+    
+    This function establishes a streaming connection to the Ollama service
+    and yields response chunks as they become available.
+    
+    Args:
+        prompt (str): Formatted prompt including context and question
+        
+    Yields:
+        str: Response chunks from the LLM as they are generated
+        
+    Raises:
+        Exception: If connection to Ollama fails or streaming encounters errors
+    """
+    try:
+        # Establish streaming POST request to Ollama API
+        with requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "llama2:latest",           # Specify LLaMA2 model
+                "prompt": prompt,                   # Complete prompt with context
+                "stream": True,                     # Enable streaming mode
+                "options": {
+                    "temperature": 0.7,             # Control randomness (0.7 = balanced creativity)
+                    "top_p": 0.9,                   # Nucleus sampling parameter
+                    "repeat_penalty": 1.2,          # Penalize repeated tokens
+                    "num_predict": 100              # Maximum tokens to generate
+                }
+            },
+            stream=True,                            # Enable response streaming
+            timeout=300                             # 5-minute timeout for long responses
+        ) as r:
+
+            # Process streaming response line by line
+            for line in r.iter_lines():
+                if not line:
+                    continue
+
+                # Parse JSON response chunk
+                data = json.loads(line.decode("utf-8"))
+
+                # Yield response content if available
+                if "response" in data:
+                    yield data["response"]
+
+                # Stop streaming when generation is complete
+                if data.get("done"):
+                    break
+                   
+    except Exception as e:
+        # Handle streaming errors gracefully
+        yield f"\n[LLM ERROR]: {str(e)}"
+
+
 @app.post("/chat")
 async def chat(q: ChatRequest):
     """
@@ -299,15 +356,88 @@ async def chat(q: ChatRequest):
 
     # Return if no relevant results found
     if not scored:
-        # Provide helpful general response instead of just saying "no info found"
-        general_answer = (
-            "While I don't have specific information about this topic in the available blog content, "
-            "here are some general recommendations:\n\n"
-            "• Minimize exposure when possible\n"
-            "• Maintain distance from wireless devices\n"
-            "• Focus on strengthening natural defenses\n"
-            "• Stay informed about ongoing research"
-        )
+        # Generate contextually appropriate response based on question type and conversation context
+        question_lower = q.question.lower()
+        
+        # Case 4: No DB results and no conversation context - Polite refusal
+        if not history:
+            print(f"⚠️ CASE 4 TRIGGERED: No DB match + No conversation history for '{q.question}'")
+            general_answer = (
+                "I don't have reliable information about this specific topic in the available content. "
+                "Could you please provide more details or rephrase your question? "
+                "Alternatively, you might want to ask about related topics like general health principles, "
+                "wellness practices, or preventive care approaches."
+            )
+        
+        # Case 3: No DB results but continuing previous conversation topic
+        elif history:
+            # Check if current question relates to previous conversation topics
+            # MATCH AGAINST BOTH QUESTION AND ANSWER (as per memory requirement)
+            last_interaction = history[-1] if history else {}
+            last_question = last_interaction.get('question', '').lower() if last_interaction else ""
+            last_answer = last_interaction.get('answer', '').lower() if last_interaction else ""
+            
+            # Combine question and answer for better context matching
+            combined_context = f"{last_question} {last_answer}"
+            conversation_keywords = set(combined_context.split())
+            current_keywords = set(question_lower.split())
+            
+            # Calculate keyword overlap
+            overlap = len(conversation_keywords.intersection(current_keywords))
+            total_unique = len(conversation_keywords.union(current_keywords))
+            similarity_ratio = overlap / total_unique if total_unique > 0 else 0
+            
+            # If there's significant topic continuity (30%+ keyword overlap)
+            if similarity_ratio > 0.3 or any(word in question_lower for word in combined_context.split()[:10]):
+                print(f"🔄 CASE 3 TRIGGERED: No DB match + Continuing topic ({similarity_ratio:.2f} similarity) for '{q.question}'")
+                print(f"   Matching against: Question='{last_question[:50]}...' Answer='{last_answer[:50]}...'")
+                
+                # CASE 3 LLM FALLBACK - Generate answer using LLM for topic continuity
+                # Build context from conversation history for LLM prompt
+                llm_context = f"Based on our previous discussion about: {last_question}\nPrevious answer context: {last_answer[:200]}"
+                
+                llm_prompt = f"""
+{llm_context}
+
+Question: {q.question}
+
+Please provide a helpful, accurate response that builds on our previous discussion. 
+Keep the answer concise (2-3 sentences) and factually correct.
+"""
+                
+                # Generate answer using LLM for Case 3
+                llm_start = time.time()
+                
+                def stream_case3_response():
+                    full_answer = ""
+                    # Stream the LLM response chunks
+                    for chunk in call_llama2_stream_direct(llm_prompt):
+                        full_answer += chunk
+                        yield chunk
+                    
+                    # Add references after the main answer
+                    yield "\n\nReferences:\n"
+                    yield "1. General health guidance\n"
+                    
+                    # Save conversation AFTER streaming finishes
+                    clean_answer = " ".join(full_answer.split())
+                    add_to_conversation_history(q.conversation_id, q.question, clean_answer)
+                    
+                    llm_time = time.time() - llm_start
+                    print(f"⏱️ CASE 3 LLM TIMING: {llm_time:.2f}s")
+                
+                return StreamingResponse(stream_case3_response(), media_type="text/plain")
+                
+            else:
+                print(f"❓ CASE 4 TRIGGERED: No DB match + Different topic ({similarity_ratio:.2f} similarity) for '{q.question}'")
+                print(f"   Context: Question='{last_question[:50]}...' Answer='{last_answer[:50]}...'")
+                # Different topic - Case 4 handling
+                general_answer = (
+                    "I don't have reliable information about this specific topic in the available content. "
+                    "Could you please provide more details or rephrase your question? "
+                    "Alternatively, you might want to ask about related topics like general health principles, "
+                    "wellness practices, or preventive care approaches."
+                )
         
         def stream_general_response():
             yield general_answer
