@@ -1,33 +1,15 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch==2.2.2+cpu
 
-python-dotenv
+sentence-transformers==2.6.1
+transformers==4.38.2
+accelerate==0.27.2
 
-
-
-# Core Dependencies for Dr. Robert Young Semantic Search System
-
-# HTTP requests library for web scraping and API calls
-requests
-
-# HTML parsing library for content extraction from web pages
-beautifulsoup4
-
-# MySQL database connector for data storage
-mysql-connector-python
-
-# Pre-trained transformer models for semantic embeddings
-# Used for converting text to vector representations
-sentence-transformers
-
-# FastAPI web framework for building the REST API
 fastapi
-
-# ASGI server for running FastAPI applications
 uvicorn
-
-# Numerical computing library for vector operations
+mysql-connector-python
 numpy
-
-# Groq API client for cloud LLM inference (Railway/Cloud deployment)
+requests
+beautifulsoup4
+python-dotenv
 groq
