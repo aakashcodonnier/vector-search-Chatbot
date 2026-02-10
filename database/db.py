@@ -6,14 +6,21 @@ This module provides database connection functionality for the semantic search s
 It manages MySQL connections for storing and retrieving articles with their embeddings.
 
 Configuration:
-- Host: localhost (assumes local MySQL server)
-- User: root (default MySQL user)
-- Password: "" (empty password for local development)
-- Database: case_studies_db (specific database for this project)
+- Supports environment variables for cloud deployment (Railway, Render, etc.)
+- Falls back to localhost defaults for local development
+- Environment variables:
+  * DB_HOST: Database host (default: localhost)
+  * DB_USER: Database username (default: root)
+  * DB_PASSWORD: Database password (default: empty string)
+  * DB_NAME: Database name (default: case_studies_db)
 
-Note: In production, use environment variables or configuration files
-for sensitive database credentials.
+Usage:
+- Local development: Works automatically with defaults
+- Cloud deployment: Set environment variables in platform settings
 """
+
+# Standard library imports
+import os
 
 # Third-party imports
 import mysql.connector  # MySQL database connector
@@ -22,23 +29,27 @@ import mysql.connector  # MySQL database connector
 def get_connection():
     """
     Establish and return a connection to the MySQL database
-    
-    This function creates a connection to the case studies database with
-    the required parameters for the semantic search system. The connection
-    uses dictionary cursor for easier data manipulation and includes proper
-    connection parameters for the project's database structure.
-    
+
+    This function creates a connection using environment variables if available,
+    otherwise falls back to localhost defaults for development.
+
+    Environment variables (optional):
+    - DB_HOST: Database host
+    - DB_USER: Database username
+    - DB_PASSWORD: Database password
+    - DB_NAME: Database name
+
     Returns:
         mysql.connector.connection.MySQLConnection: Database connection object
-        
+
     Note:
-        - Uses dictionary cursor for named column access
-        - Connection parameters are hardcoded for development
-        - In production, use connection pooling and environment variables
+        - Automatically detects local vs cloud environment
+        - Local: Uses localhost with default credentials
+        - Cloud: Uses environment variables from platform
     """
     return mysql.connector.connect(
-        host="localhost",        # Database host (local development)
-        user="root",           # Database username (MySQL default)
-        password="",           # Database password (empty for local dev)
-        database="case_studies_db"  # Target database name for scraped articles
+        host=os.getenv("DB_HOST", "localhost"),      # Cloud or localhost
+        user=os.getenv("DB_USER", "root"),           # Cloud or root
+        password=os.getenv("DB_PASSWORD", ""),       # Cloud or empty
+        database=os.getenv("DB_NAME", "case_studies_db")  # Cloud or case_studies_db
     )

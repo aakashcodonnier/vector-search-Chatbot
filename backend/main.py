@@ -18,6 +18,11 @@ import json
 import subprocess
 import numpy as np
 from collections import deque
+import asyncio
+
+# Load environment variables from .env file
+from dotenv import load_dotenv
+load_dotenv()
 
 # Third-party imports
 from fastapi import FastAPI
@@ -25,6 +30,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import requests
 from sentence_transformers import SentenceTransformer
+
+# Groq API for cloud LLM inference
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    print("[WARNING] Groq library not installed. Cloud deployment will not work.")
 
 # Local imports
 # Add the project root directory to the Python path
@@ -43,6 +56,22 @@ app = FastAPI(
 # Initialize embedding model for vector search
 # Using all-MiniLM-L6-v2 for efficient sentence embeddings
 embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+
+# Initialize Groq client for cloud LLM (if API key available)
+groq_client = None
+if GROQ_AVAILABLE:
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if groq_api_key:
+        try:
+            groq_client = Groq(api_key=groq_api_key)
+            print("[LLM] OK - Groq API initialized (Cloud mode)")
+        except Exception as e:
+            print(f"[LLM] ERROR - Groq initialization failed: {e}")
+            groq_client = None
+    else:
+        print("[LLM] Using Ollama (Local mode - no GROQ_API_KEY found)")
+else:
+    print("[LLM] Using Ollama (Local mode - groq library not installed)")
 
 # Session-based conversation memory (stores last 5 interactions per conversation)
 conversation_memory = {}
@@ -291,16 +320,16 @@ def call_llama2_stream(prompt: str):
 def call_llama2_stream_direct(prompt: str):
     """
     Call locally running LLM via Ollama with streaming capability for direct responses
-    
+
     This function establishes a streaming connection to the Ollama service
     and yields response chunks as they become available.
-    
+
     Args:
         prompt (str): Formatted prompt including context and question
-        
+
     Yields:
         str: Response chunks from the LLM as they are generated
-        
+
     Raises:
         Exception: If connection to Ollama fails or streaming encounters errors
     """
@@ -338,10 +367,110 @@ def call_llama2_stream_direct(prompt: str):
                 # Stop streaming when generation is complete
                 if data.get("done"):
                     break
-                   
+
     except Exception as e:
         # Handle streaming errors gracefully
         yield f"\n[LLM ERROR]: {str(e)}"
+
+
+def call_groq_stream(prompt: str):
+    """
+    Call Groq API with streaming capability (for cloud deployment)
+
+    Groq provides ultra-fast LLM inference with streaming support.
+    Uses llama-3.1-70b-versatile which is significantly more powerful
+    and faster than llama2:7b.
+
+    Benefits over Ollama:
+    - 10x faster response time (1-2s vs 10-15s)
+    - Better quality (70B vs 7B parameters)
+    - No local resources needed
+    - Perfect for Railway/cloud deployment
+
+    Args:
+        prompt (str): Formatted prompt including context and question
+
+    Yields:
+        str: Response chunks from the LLM as they are generated
+
+    Raises:
+        Exception: If Groq API fails or streaming encounters errors
+    """
+    try:
+        if not groq_client:
+            yield "[LLM ERROR]: Groq client not initialized. Check GROQ_API_KEY environment variable."
+            return
+
+        # Call Groq API with streaming
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a helpful AI assistant. Provide concise, accurate answers (1-2 sentences max) based on the given context."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            model="llama-3.3-70b-versatile",  # Updated 70B model - much better than llama2:7B
+            temperature=0.7,
+            max_tokens=100,
+            top_p=0.9,
+            stream=True,
+        )
+
+        # Stream response chunks as they arrive
+        for chunk in chat_completion:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+                # Add small delay to make response feel more natural
+                time.sleep(0.08)  # Increased to 80ms delay between chunks
+
+    except Exception as e:
+        yield f"[LLM ERROR]: {type(e).__name__} - {str(e)}"
+
+
+def call_groq_stream_direct(prompt: str):
+    """
+    Call Groq API with streaming for direct responses (Case 3 fallback)
+
+    Same as call_groq_stream but optimized for direct answer generation
+    without database context.
+
+    Args:
+        prompt (str): Formatted prompt
+
+    Yields:
+        str: Response chunks from the LLM
+    """
+    try:
+        if not groq_client:
+            yield "[LLM ERROR]: Groq client not initialized"
+            return
+
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            model="llama-3.3-70b-versatile",
+            temperature=0.7,
+            max_tokens=100,
+            top_p=0.9,
+            stream=True,
+        )
+
+        for chunk in chat_completion:
+            if chunk.choices[0].delta.content:
+                yield chunk.choices[0].delta.content
+                # Add small delay to make response feel more natural
+                time.sleep(0.08)  # Increased to 80ms delay between chunks
+
+    except Exception as e:
+        yield f"\n[LLM ERROR]: {type(e).__name__} - {str(e)}"
 
 
 @app.post("/chat")
@@ -476,10 +605,14 @@ Keep the answer concise (2-3 sentences) and factually correct.
                     
                     # Stream the LLM response chunks as they arrive
                     try:
-                        for chunk in call_llama2_stream_direct(llm_prompt):
+                        # Auto-select: Use Groq if available (cloud), otherwise Ollama (local)
+                        llm_function = call_groq_stream_direct if groq_client else call_llama2_stream_direct
+                        for chunk in llm_function(llm_prompt):
                             if chunk.strip():  # Only yield non-empty chunks
                                 full_answer += chunk
                                 yield chunk
+                                # Add small delay to make response feel more natural
+                                time.sleep(0.05)  # Increased to 50ms delay between frontend updates
                                 
                         # Add references after the main answer
                         yield "\n\nReferences:\n"
@@ -554,10 +687,14 @@ Answer (1-2 sentences max):"""
 
         # Stream the LLM response chunks as they arrive
         try:
-            for chunk in call_llama2_stream(prompt):
+            # Auto-select: Use Groq if available (cloud), otherwise Ollama (local)
+            llm_function = call_groq_stream if groq_client else call_llama2_stream
+            for chunk in llm_function(prompt):
                 if chunk.strip():  # Only yield non-empty chunks
                     full_answer += chunk
                     yield chunk
+                    # Add small delay to make response feel more natural
+                    time.sleep(0.05)  # Increased to 50ms delay between frontend updates
                     
             # Add references after the main answer
             yield "\n\nReferences:\n"

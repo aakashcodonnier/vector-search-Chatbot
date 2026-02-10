@@ -21,3 +21,6 @@ uvicorn
 
 # Numerical computing library for vector operations
 numpy
+
+# Groq API client for cloud LLM inference (Railway/Cloud deployment)
+groq
