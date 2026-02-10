@@ -2,6 +2,8 @@
 """
 Model Downloader for Dr. Robert Young's Semantic Search System
 
+
+
 This module automatically downloads the required LLM model for the semantic search system.
 It checks for Ollama installation and pulls the specified model.
 
