@@ -175,21 +175,36 @@ async function sendMessage() {
             })
         });
 
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         botDiv.textContent = "";
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
 
+        let accumulatedText = "";
+        
         while (true) {
             const { value, done } = await reader.read();
             if (done) break;
-            botDiv.textContent += decoder.decode(value);
+            
+            const chunk = decoder.decode(value);
+            accumulatedText += chunk;
+            botDiv.textContent = accumulatedText;
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
+        // If no content was received, show an error
+        if (!accumulatedText.trim()) {
+            botDiv.textContent = "❌ No response received from server. Please check if the LLM service is running.";
+            botDiv.classList.add("error");
+        }
+
     } catch (err) {
-        botDiv.textContent = "❌ Server error. Backend Start your Backend Then Ask a Question.";
+        console.error("Fetch error:", err);
+        botDiv.textContent = `❌ Error: ${err.message}. Please ensure the backend server is running and LLM service is available.`;
         botDiv.classList.add("error");
-        console.error(err);
     }
 
     sendBtn.disabled = false;

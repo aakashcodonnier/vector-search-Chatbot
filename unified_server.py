@@ -95,12 +95,12 @@ async def health_check():
 if __name__ == "__main__":
     # Startup banner with connection information
     print("=" * 60)
-    print("🚀 UNIFIED SERVER STARTING")
+    print("UNIFIED SERVER STARTING")
     print("=" * 60)
-    print("✨ Single URL for everything: http://192.168.1.43:8000")
-    print("🌐 Frontend: http://127.0.0.1:8000/")
-    print("🔌 Backend API: http://127.0.0.1:8000/api/")
-    print("📚 API Docs: http://127.0.0.1:8000/api/docs")
+    print("Single URL for everything: http://192.168.1.4:8000")
+    print("Frontend: http://127.0.0.1:8000/")
+    print("Backend API: http://127.0.0.1:8000/api/")
+    print("API Docs: http://127.0.0.1:8000/api/docs")
     print("=" * 60)
     
     # Start the server with auto-reload for development

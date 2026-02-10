@@ -47,6 +47,34 @@ embed_model = SentenceTransformer("all-MiniLM-L6-v2")
 # Session-based conversation memory (stores last 5 interactions per conversation)
 conversation_memory = {}
 
+def warm_up_ollama_model():
+    """
+    Warm up the Ollama model by making a simple request
+    This pre-loads the model into memory to avoid delays on first user request
+    """
+    try:
+        print("\n[OLLAMA] Warming up model...")
+        response = requests.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": "llama2:latest",
+                "prompt": "Hello",
+                "stream": False
+            },
+            timeout=60
+        )
+        if response.status_code == 200:
+            print("[OLLAMA] Model warmed up successfully!")
+        else:
+            print(f"[OLLAMA] Warm-up returned status {response.status_code}")
+    except Exception as e:
+        print(f"[OLLAMA] Warm-up failed: {e}")
+        print("[OLLAMA] Model will load on first request (may take 10-15 seconds)")
+
+# Warm up model on startup (run in background to not block server start)
+import threading
+threading.Thread(target=warm_up_ollama_model, daemon=True).start()
+
 def get_conversation_history(conversation_id: str):
     """Get conversation history for given ID"""
     if conversation_id not in conversation_memory:
@@ -63,7 +91,7 @@ def add_to_conversation_history(conversation_id: str, question: str, answer: str
     })
     
     # Log the addition
-    print(f"💾 SAVED TO SESSION [{conversation_id}]:")
+    print(f"[SAVED] Session [{conversation_id}]:")
     print(f"   Question: {question[:60]}...")
     print(f"   Answer: {answer[:60]}...")
     print(f"   Total interactions: {len(history)}")
@@ -172,21 +200,27 @@ def sanitize_answer(text: str, question: str) -> str:
 def call_llama2_stream(prompt: str):
     """
     Call locally running LLM via Ollama with streaming capability
-    
+
     This function establishes a streaming connection to the Ollama service
     and yields response chunks as they become available, enabling real-time
     response delivery to the client.
-    
+
     Args:
         prompt (str): Formatted prompt including context and question
-        
+
     Yields:
         str: Response chunks from the LLM as they are generated
-        
+
     Raises:
         Exception: If connection to Ollama fails or streaming encounters errors
     """
     try:
+        # Test Ollama connection first
+        test_response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        if test_response.status_code != 200:
+            yield "[LLM ERROR]: Ollama service not responding"
+            return
+
         # Establish streaming POST request to Ollama API
         with requests.post(
             "http://localhost:11434/api/generate",
@@ -205,27 +239,53 @@ def call_llama2_stream(prompt: str):
             timeout=300                             # 5-minute timeout for long responses
         ) as r:
 
+            if r.status_code != 200:
+                # Log detailed error for debugging
+                error_text = r.text if hasattr(r, 'text') else 'No error details'
+                print(f"[OLLAMA ERROR] Status {r.status_code}: {error_text}")
+                yield f"[LLM ERROR]: Ollama returned status {r.status_code}. The model may be loading. Please wait a moment and try again."
+                return
+
+            # Track if we received any response
+            received_response = False
+
             # Process streaming response line by line
             for line in r.iter_lines():
                 if not line:
                     continue
 
-                # Parse JSON response chunk
-                data = json.loads(line.decode("utf-8"))
+                try:
+                    # Parse JSON response chunk
+                    data = json.loads(line.decode("utf-8"))
 
-                # Yield response content if available
-                if "response" in data:
-                    yield data["response"]
+                    # Yield response content if available
+                    if "response" in data and data["response"]:
+                        received_response = True
+                        yield data["response"]
 
+                    # Stop streaming when generation is complete
+                    if data.get("done"):
+                        break
 
-                # Stop streaming when generation is complete
-                if data.get("done"):
+                except json.JSONDecodeError:
+                    # Skip malformed JSON lines
+                    continue
+                except Exception as e:
+                    yield f"[PARSING ERROR]: {str(e)}"
                     break
-                   
 
+            # If no response was received, model might be loading
+            if not received_response:
+                yield "[LLM ERROR]: No response received. The model may still be loading. Please try again."
+
+    except requests.exceptions.ConnectionError:
+        yield "[LLM ERROR]: Cannot connect to Ollama service. Is it running? Start it with 'ollama serve'"
+    except requests.exceptions.Timeout:
+        yield "[LLM ERROR]: Ollama request timed out. The model may be loading or the prompt may be too complex."
     except Exception as e:
         # Handle streaming errors gracefully
-        yield f"\n[LLM ERROR]: {str(e)}"
+        print(f"[OLLAMA EXCEPTION]: {type(e).__name__}: {str(e)}")
+        yield f"[LLM ERROR]: {type(e).__name__} - {str(e)}"
 
 
 def call_llama2_stream_direct(prompt: str):
@@ -305,8 +365,8 @@ async def chat(q: ChatRequest):
     history = get_conversation_history(q.conversation_id)
     
     # Log conversation tracking
-    print(f"🔄 CONVERSATION SESSION: {q.conversation_id}")
-    print(f"📊 HISTORY LENGTH: {len(history)} interactions")
+    print(f"[SESSION] CONVERSATION: {q.conversation_id}")
+    print(f"[HISTORY] LENGTH: {len(history)} interactions")
     
     # Build context from conversation history
     history_context = ""
@@ -316,7 +376,7 @@ async def chat(q: ChatRequest):
             history_lines.append(f"Previous question: {item['question']}")
             history_lines.append(f"Previous answer: {item['answer']}")
         history_context = "\n".join(history_lines) + "\n"
-        print(f"📝 CONTEXT LINES ADDED: {len(history_lines)}")
+        print(f"[CONTEXT] LINES ADDED: {len(history_lines)}")
 
     # 1️⃣ Embed user question using sentence transformer
     embed_start = time.time()
@@ -327,7 +387,7 @@ async def chat(q: ChatRequest):
     db_start = time.time()
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT title, content, embedding FROM dr_young_all_articles LIMIT 50")
+    cur.execute("SELECT title, content, embedding, url FROM dr_young_all_articles LIMIT 50")
     rows = cur.fetchall()
     db_time = time.time() - db_start
 
@@ -361,7 +421,7 @@ async def chat(q: ChatRequest):
         
         # Case 4: No DB results and no conversation context - Polite refusal
         if not history:
-            print(f"⚠️ CASE 4 TRIGGERED: No DB match + No conversation history for '{q.question}'")
+            print(f"[CASE 4] TRIGGERED: No DB match + No conversation history for '{q.question}'")
             general_answer = (
                 "I don't have reliable information about this specific topic in the available content. "
                 "Could you please provide more details or rephrase your question? "
@@ -389,7 +449,7 @@ async def chat(q: ChatRequest):
             
             # If there's significant topic continuity (30%+ keyword overlap)
             if similarity_ratio > 0.3 or any(word in question_lower for word in combined_context.split()[:10]):
-                print(f"🔄 CASE 3 TRIGGERED: No DB match + Continuing topic ({similarity_ratio:.2f} similarity) for '{q.question}'")
+                print(f"[CASE 3] TRIGGERED: No DB match + Continuing topic ({similarity_ratio:.2f} similarity) for '{q.question}'")
                 print(f"   Matching against: Question='{last_question[:50]}...' Answer='{last_answer[:50]}...'")
                 
                 # CASE 3 LLM FALLBACK - Generate answer using LLM for topic continuity
@@ -410,26 +470,34 @@ Keep the answer concise (2-3 sentences) and factually correct.
                 
                 def stream_case3_response():
                     full_answer = ""
-                    # Stream the LLM response chunks
-                    for chunk in call_llama2_stream_direct(llm_prompt):
-                        full_answer += chunk
-                        yield chunk
+
+                    # Stream the prefix immediately
+                    yield "Answer With AI:\n\n"
                     
-                    # Add references after the main answer
-                    yield "\n\nReferences:\n"
-                    yield "1. General health guidance\n"
-                    
-                    # Save conversation AFTER streaming finishes
-                    clean_answer = " ".join(full_answer.split())
-                    add_to_conversation_history(q.conversation_id, q.question, clean_answer)
-                    
-                    llm_time = time.time() - llm_start
-                    print(f"⏱️ CASE 3 LLM TIMING: {llm_time:.2f}s")
+                    # Stream the LLM response chunks as they arrive
+                    try:
+                        for chunk in call_llama2_stream_direct(llm_prompt):
+                            if chunk.strip():  # Only yield non-empty chunks
+                                full_answer += chunk
+                                yield chunk
+                                
+                        # Add references after the main answer
+                        yield "\n\nReferences:\n"
+                        yield "1. General health guidance\n"
+                        
+                        # Save conversation AFTER streaming finishes
+                        clean_answer = " ".join(full_answer.split())
+                        add_to_conversation_history(q.conversation_id, q.question, clean_answer)
+                        
+                        llm_time = time.time() - llm_start
+                        print(f"[TIMING] CASE 3 LLM: {llm_time:.2f}s")
+                    except Exception as e:
+                        yield f"[LLM ERROR]: {str(e)}"
                 
                 return StreamingResponse(stream_case3_response(), media_type="text/plain")
                 
             else:
-                print(f"❓ CASE 4 TRIGGERED: No DB match + Different topic ({similarity_ratio:.2f} similarity) for '{q.question}'")
+                print(f"[CASE 4] TRIGGERED: No DB match + Different topic ({similarity_ratio:.2f} similarity) for '{q.question}'")
                 print(f"   Context: Question='{last_question[:50]}...' Answer='{last_answer[:50]}...'")
                 # Different topic - Case 4 handling
                 general_answer = (
@@ -449,11 +517,14 @@ Keep the answer concise (2-3 sentences) and factually correct.
     # 4️⃣ Build context from top matching articles
     context_start = time.time()
     context_parts = []
-    references = []  # Track source references
+    references = []  # Track source references with URLs
 
     for _, art in scored:
-        # Add article title to references
-        references.append(art["title"])
+        # Add article title and URL to references
+        references.append({
+            "title": art["title"],
+            "url": art["url"]
+        })
         # Clean and truncate article content
         cleaned = clean_context(art["content"][:200])
         context_parts.append(cleaned)
@@ -475,27 +546,36 @@ Answer (1-2 sentences max):"""
     llm_start = time.time()
 
     def stream_response():
+
         full_answer = ""
 
-        for chunk in call_llama2_stream(prompt):
-            full_answer += chunk
-            yield chunk
+        # Stream the prefix immediately
+        yield "Answer With AI:\n\n"
 
-        # Add references after the main answer
-        yield "\n\nReferences:\n"
-        for i, ref in enumerate(references, 1):
-            yield f"{i}. {ref}\n"
-
-        # Save conversation AFTER streaming finishes
-        clean_answer = " ".join(full_answer.split())
-        add_to_conversation_history(q.conversation_id, q.question, clean_answer)
-
-        llm_time = time.time() - llm_start
-        total_time = time.time() - start_time
-
-        print("⏱️ TIMING:")
-        print(f"Embedding: {embed_time:.2f}s | DB: {db_time:.2f}s | Search: {search_time:.2f}s")
-        print(f"Context: {context_time:.2f}s | LLM: {llm_time:.2f}s | Total: {total_time:.2f}s")
+        # Stream the LLM response chunks as they arrive
+        try:
+            for chunk in call_llama2_stream(prompt):
+                if chunk.strip():  # Only yield non-empty chunks
+                    full_answer += chunk
+                    yield chunk
+                    
+            # Add references after the main answer
+            yield "\n\nReferences:\n"
+            for i, ref in enumerate(references, 1):
+                yield f"{i}. {ref['url']}\n"
+                
+            # Save conversation AFTER streaming finishes
+            clean_answer = " ".join(full_answer.split())
+            add_to_conversation_history(q.conversation_id, q.question, clean_answer)
+            
+            llm_time = time.time() - llm_start
+            total_time = time.time() - start_time
+            
+            print("[TIMING]:")
+            print(f"Embedding: {embed_time:.2f}s | DB: {db_time:.2f}s | Search: {search_time:.2f}s")
+            print(f"Context: {context_time:.2f}s | LLM: {llm_time:.2f}s | Total: {total_time:.2f}s")
+        except Exception as e:
+            yield f"[LLM ERROR]: {str(e)}"
 
     return StreamingResponse(
         stream_response(),
