@@ -55,7 +55,15 @@ app = FastAPI(
 
 # Initialize embedding model for vector search
 # Using all-MiniLM-L6-v2 for efficient sentence embeddings
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
+import torch
+from sentence_transformers import SentenceTransformer
+
+device = "cpu"
+
+embed_model = SentenceTransformer(
+    "all-MiniLM-L6-v2",
+    device=device
+)
 
 # Initialize Groq client for cloud LLM (if API key available)
 groq_client = None
@@ -509,7 +517,11 @@ async def chat(q: ChatRequest):
 
     # 1️⃣ Embed user question using sentence transformer
     embed_start = time.time()
-    query_emb = embed_model.encode(q.question)
+    query_emb = embed_model.encode(
+        q.question,
+        convert_to_numpy=True,
+        device="cpu"
+    )
     embed_time = time.time() - embed_start
 
     # 2️⃣ Fetch articles from database
