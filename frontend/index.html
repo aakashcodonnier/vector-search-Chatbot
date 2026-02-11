@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#080c14">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Dr. Robert O. Young - AI Assistant</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -396,34 +399,105 @@
             transform: translateY(-1px);
         }
 
+        /* Tablet */
+        @media (max-width: 768px) {
+            body { padding: 8px; }
+            .container { height: 96vh; border-radius: 16px; }
+            .msg-wrapper { max-width: 88%; }
+        }
+
         /* Mobile */
         @media (max-width: 640px) {
-            body { padding: 0; }
+            html { height: 100%; overflow: hidden; }
+
+            body {
+                padding: 0;
+                height: 100%;
+                /* Prevent pull-to-refresh */
+                overscroll-behavior: none;
+            }
 
             .container {
                 height: 100vh;
                 height: 100dvh;
+                height: -webkit-fill-available;
                 border-radius: 0;
                 border: none;
                 max-width: 100%;
+                box-shadow: none;
             }
 
-            .header { padding: 14px 16px; }
+            /* Safe area for notched phones (iPhone X+) */
+            .header {
+                padding: 14px 16px;
+                padding-top: max(14px, env(safe-area-inset-top));
+            }
+
             .header-info h1 { font-size: 14.5px; }
-            .header-avatar { width: 40px; height: 40px; font-size: 18px; }
+            .header-avatar { width: 40px; height: 40px; font-size: 18px; border-radius: 12px; }
 
-            .messages { padding: 16px 14px; gap: 14px; }
-            .msg-wrapper { max-width: 90%; }
-            .msg-bubble { font-size: 13.5px; padding: 10px 14px; }
+            .messages {
+                padding: 14px 12px;
+                gap: 12px;
+                /* Smooth momentum scroll on iOS */
+                -webkit-overflow-scrolling: touch;
+            }
 
-            .input-area { padding: 12px 14px 16px; }
-            #question { padding: 12px 14px; font-size: 14px; border-radius: 14px; }
-            #send-btn { width: 44px; height: 44px; border-radius: 14px; }
+            .msg-wrapper { max-width: 92%; gap: 8px; }
+            .msg-avatar { width: 30px; height: 30px; font-size: 13px; border-radius: 8px; }
+            .msg-bubble { font-size: 14px; padding: 10px 14px; border-radius: 16px; }
+            .bot .msg-bubble { border-bottom-left-radius: 4px; }
+            .user .msg-bubble { border-bottom-right-radius: 4px; }
+            .msg-time { font-size: 10px; }
 
-            .welcome-avatar { width: 60px; height: 60px; font-size: 26px; }
+            .input-area {
+                padding: 10px 12px;
+                padding-bottom: max(12px, env(safe-area-inset-bottom));
+                gap: 8px;
+            }
+
+            #question {
+                padding: 12px 14px;
+                font-size: 16px; /* Prevents iOS zoom on focus */
+                border-radius: 14px;
+            }
+
+            #send-btn {
+                width: 46px;
+                height: 46px;
+                border-radius: 14px;
+                /* Better touch target */
+                min-width: 46px;
+                min-height: 46px;
+            }
+
+            .welcome { padding: 24px 16px; }
+            .welcome-avatar { width: 56px; height: 56px; font-size: 24px; border-radius: 16px; }
             .welcome h3 { font-size: 16px; }
-            .suggestions { gap: 6px; }
-            .chip { padding: 7px 12px; font-size: 12px; }
+            .welcome p { font-size: 13px; max-width: 280px; }
+
+            .suggestions { gap: 6px; margin-top: 18px; max-width: 320px; }
+            .chip {
+                padding: 8px 14px;
+                font-size: 12px;
+                /* Touch friendly */
+                -webkit-tap-highlight-color: transparent;
+                touch-action: manipulation;
+            }
+
+            /* Hide scrollbar on mobile */
+            .messages::-webkit-scrollbar { display: none; }
+            .messages { -ms-overflow-style: none; scrollbar-width: none; }
+        }
+
+        /* Very small phones */
+        @media (max-width: 380px) {
+            .header-info h1 { font-size: 13.5px; }
+            .header-info p { font-size: 11px; }
+            .header-avatar { width: 36px; height: 36px; font-size: 16px; }
+            .msg-bubble { font-size: 13.5px; }
+            .welcome h3 { font-size: 15px; }
+            .chip { font-size: 11.5px; padding: 7px 12px; }
         }
     </style>
 </head>
@@ -600,6 +674,17 @@ sendBtn.addEventListener("click", sendMessage);
 questionInput.addEventListener("keydown", e => {
     if (e.key === "Enter") sendMessage();
 });
+
+// Mobile: handle virtual keyboard resize
+if (window.visualViewport) {
+    window.visualViewport.addEventListener("resize", () => {
+        document.querySelector(".container").style.height = window.visualViewport.height + "px";
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    });
+}
+
+// Mobile: prevent body scroll when touching messages area
+messagesDiv.addEventListener("touchmove", e => e.stopPropagation(), { passive: true });
 </script>
 </body>
 </html>
