@@ -178,11 +178,8 @@ def clean_context(text: str) -> str:
     # Remove bullet symbols
     text = re.sub(r"[•\-–▪]", " ", text)
 
-    # Remove reference / links section
-    stop_words = ["References", "REFERENCES", "http", "www."]
-    for w in stop_words:
-        if w in text:
-            text = text.split(w)[0]
+    # Remove standalone reference sections at the end (but keep inline URLs and references)
+    text = re.sub(r"\n\s*References?\s*:\s*$", "", text, flags=re.MULTILINE | re.IGNORECASE)
 
     return text.strip()
 
@@ -269,7 +266,7 @@ def call_llama2_stream(prompt: str):
                     "temperature": 0.7,             # Control randomness (0.7 = balanced creativity)
                     "top_p": 0.9,                   # Nucleus sampling parameter
                     "repeat_penalty": 1.2,          # Penalize repeated tokens
-                    "num_predict": 100              # Maximum tokens to generate
+                    "num_predict": 300              # Maximum tokens to generate
                 }
             },
             stream=True,                            # Enable response streaming
@@ -353,7 +350,7 @@ def call_llama2_stream_direct(prompt: str):
                     "temperature": 0.7,             # Control randomness (0.7 = balanced creativity)
                     "top_p": 0.9,                   # Nucleus sampling parameter
                     "repeat_penalty": 1.2,          # Penalize repeated tokens
-                    "num_predict": 100              # Maximum tokens to generate
+                    "num_predict": 300              # Maximum tokens to generate
                 }
             },
             stream=True,                            # Enable response streaming
@@ -414,7 +411,28 @@ def call_groq_stream(prompt: str):
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a helpful AI assistant. Provide concise, accurate answers (1-2 sentences max) based on the given context."
+                    "content": (
+                        "You ARE Dr. Robert O. Young. You are NOT an AI assistant - you are Dr. Young himself answering questions.\n\n"
+                        "CRITICAL RULES:\n"
+                        "- NEVER say 'As an AI', 'Based on Dr. Young's research', 'According to Dr. Young', "
+                        "'As I have emphasized in my research', or any phrase that reveals you are AI\n"
+                        "- NEVER refer to yourself in third person. Do NOT say 'Dr. Young's work shows...' - "
+                        "instead say 'My research shows...'\n"
+                        "- Answer naturally as if you are the expert directly speaking to the person\n"
+                        "- Speak with authority and confidence as the researcher who did this work\n\n"
+                        "Your expertise: New Biology, pH Miracle lifestyle, cellular health, detoxification, "
+                        "alkaline nutrition, structured water.\n\n"
+                        "Key principles:\n"
+                        "- Always answer based on the provided context\n"
+                        "- Include specific chemical names with scientific abbreviations/formulas "
+                        "(e.g., polyethylene glycol (PEG), graphene oxide (GO), ferric oxide (FeO))\n"
+                        "- Include author names, journal names, and study titles exactly as in the context\n"
+                        "- Include specific numbers, measurements, and scientific data from the context\n"
+                        "- Reference MasterPeace Zeolite Z when relevant for detoxification\n"
+                        "- Never make claims beyond what the provided content supports\n"
+                        "- IMPORTANT: If the context contains URLs or links, include them at the end of your answer "
+                        "with a short intro like 'See here for more info:' or 'Learn more here:' followed by the URLs, each on a new line"
+                    )
                 },
                 {
                     "role": "user",
@@ -423,7 +441,7 @@ def call_groq_stream(prompt: str):
             ],
             model="llama-3.3-70b-versatile",  # Updated 70B model - much better than llama2:7B
             temperature=0.7,
-            max_tokens=100,
+            max_tokens=300,
             top_p=0.9,
             stream=True,
         )
@@ -460,13 +478,22 @@ def call_groq_stream_direct(prompt: str):
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {
+                    "role": "system",
+                    "content": (
+                        "You ARE Dr. Robert O. Young. Never say 'As an AI' or refer to yourself in third person. "
+                        "Answer naturally as the expert. Your expertise: New Biology, pH Miracle lifestyle, "
+                        "alkaline health, cellular detoxification. Include specific chemical names, "
+                        "scientific data, and study references. Speak with authority."
+                    )
+                },
+                {
                     "role": "user",
                     "content": prompt
                 }
             ],
             model="llama-3.3-70b-versatile",
             temperature=0.7,
-            max_tokens=100,
+            max_tokens=300,
             top_p=0.9,
             stream=True,
         )
@@ -528,7 +555,7 @@ async def chat(q: ChatRequest):
     db_start = time.time()
     conn = get_connection()
     cur = conn.cursor(dictionary=True)
-    cur.execute("SELECT title, content, embedding, url FROM dr_young_all_articles LIMIT 50")
+    cur.execute("SELECT title, content, embedding, url FROM dr_young_all_articles")
     rows = cur.fetchall()
     db_time = time.time() - db_start
 
@@ -602,8 +629,7 @@ async def chat(q: ChatRequest):
 
 Question: {q.question}
 
-Please provide a helpful, accurate response that builds on our previous discussion. 
-Keep the answer concise (2-3 sentences) and factually correct.
+Answer this question directly as Dr. Robert O. Young. Do NOT say "As an AI" or refer to yourself in third person. Speak naturally and confidently as the expert. Provide a detailed, informative answer (3-5 sentences).
 """
                 
                 # Generate answer using LLM for Case 3
@@ -626,10 +652,6 @@ Keep the answer concise (2-3 sentences) and factually correct.
                                 # Add small delay to make response feel more natural
                                 time.sleep(0.05)  # Increased to 50ms delay between frontend updates
                                 
-                        # Add references after the main answer
-                        yield "\n\nReferences:\n"
-                        yield "1. General health guidance\n"
-                        
                         # Save conversation AFTER streaming finishes
                         clean_answer = " ".join(full_answer.split())
                         add_to_conversation_history(q.conversation_id, q.question, clean_answer)
@@ -654,8 +676,6 @@ Keep the answer concise (2-3 sentences) and factually correct.
         
         def stream_general_response():
             yield general_answer
-            yield "\n\nReferences:\n"
-            yield "1. General health guidance\n"
         
         return StreamingResponse(stream_general_response(), media_type="text/plain")
 
@@ -671,7 +691,7 @@ Keep the answer concise (2-3 sentences) and factually correct.
             "url": art["url"]
         })
         # Clean and truncate article content
-        cleaned = clean_context(art["content"][:200])
+        cleaned = clean_context(art["content"][:1500])
         context_parts.append(cleaned)
 
     print("CONTEXT LENGTH:", len(context_parts))
@@ -682,11 +702,17 @@ Keep the answer concise (2-3 sentences) and factually correct.
 
     # 5️⃣ Format prompt for LLM with conversation context
     prompt = f"""
-{history_context}Context: {context}
+{history_context}The following is from your published articles and research:
+
+{context}
+
+Answer the following question directly as yourself. Do NOT say "As an AI" or "According to my research" - just answer naturally and confidently. Include specific chemical names with abbreviations, scientific data, and study references exactly as they appear above. Provide a detailed, informative answer.
+
+IMPORTANT: If the context contains any URLs or links, you MUST include them at the end of your answer. Write a short intro line like "See here for more info:" or "Learn more here:" followed by the actual URLs from the context, each on a new line. Do NOT skip any URLs from the context.
 
 Question: {q.question}
 
-Answer (1-2 sentences max):"""
+Answer:"""
 
     llm_start = time.time()
 
@@ -708,11 +734,11 @@ Answer (1-2 sentences max):"""
                     # Add small delay to make response feel more natural
                     time.sleep(0.05)  # Increased to 50ms delay between frontend updates
                     
-            # Add references after the main answer
+            # Add references with article titles
             yield "\n\nReferences:\n"
             for i, ref in enumerate(references, 1):
-                yield f"{i}. {ref['url']}\n"
-                
+                yield f"{i}. {ref['title']}\n"
+
             # Save conversation AFTER streaming finishes
             clean_answer = " ".join(full_answer.split())
             add_to_conversation_history(q.conversation_id, q.question, clean_answer)
