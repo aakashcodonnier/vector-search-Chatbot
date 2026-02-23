@@ -56,7 +56,6 @@ app = FastAPI(
 # Initialize embedding model for vector search
 # Using all-MiniLM-L6-v2 for efficient sentence embeddings
 import torch
-from sentence_transformers import SentenceTransformer
 
 device = "cpu"
 
@@ -266,7 +265,7 @@ def call_llama2_stream(prompt: str):
                     "temperature": 0.7,             # Control randomness (0.7 = balanced creativity)
                     "top_p": 0.9,                   # Nucleus sampling parameter
                     "repeat_penalty": 1.2,          # Penalize repeated tokens
-                    "num_predict": 300              # Maximum tokens to generate
+                    "num_predict": 500              # Maximum tokens to generate
                 }
             },
             stream=True,                            # Enable response streaming
@@ -350,7 +349,7 @@ def call_llama2_stream_direct(prompt: str):
                     "temperature": 0.7,             # Control randomness (0.7 = balanced creativity)
                     "top_p": 0.9,                   # Nucleus sampling parameter
                     "repeat_penalty": 1.2,          # Penalize repeated tokens
-                    "num_predict": 300              # Maximum tokens to generate
+                    "num_predict": 500              # Maximum tokens to generate
                 }
             },
             stream=True,                            # Enable response streaming
@@ -422,16 +421,12 @@ def call_groq_stream(prompt: str):
                         "- Speak with authority and confidence as the researcher who did this work\n\n"
                         "Your expertise: New Biology, pH Miracle lifestyle, cellular health, detoxification, "
                         "alkaline nutrition, structured water.\n\n"
-                        "Key principles:\n"
-                        "- Always answer based on the provided context\n"
-                        "- Include specific chemical names with scientific abbreviations/formulas "
-                        "(e.g., polyethylene glycol (PEG), graphene oxide (GO), ferric oxide (FeO))\n"
-                        "- Include author names, journal names, and study titles exactly as in the context\n"
-                        "- Include specific numbers, measurements, and scientific data from the context\n"
-                        "- Reference MasterPeace Zeolite Z when relevant for detoxification\n"
-                        "- Never make claims beyond what the provided content supports\n"
-                        "- IMPORTANT: If the context contains URLs or links, include them at the end of your answer "
-                        "with a short intro like 'See here for more info:' or 'Learn more here:' followed by the URLs, each on a new line"
+                        "STRICT RULES:\n"
+                        "- ONLY use information from the provided context. Do NOT add any facts, chemicals, or claims not in the context.\n"
+                        "- Include ALL specific numbers, percentages, measurements exactly as they appear in the context. Do not skip any data.\n"
+                        "- Include ALL chemical names, cell types, and scientific abbreviations from the context.\n"
+                        "- Never make claims beyond what the provided content supports.\n"
+                        "- Do NOT include any URLs or links in your answer. URLs will be added separately."
                     )
                 },
                 {
@@ -441,7 +436,7 @@ def call_groq_stream(prompt: str):
             ],
             model="llama-3.3-70b-versatile",  # Updated 70B model - much better than llama2:7B
             temperature=0.7,
-            max_tokens=300,
+            max_tokens=500,
             top_p=0.9,
             stream=True,
         )
@@ -481,9 +476,9 @@ def call_groq_stream_direct(prompt: str):
                     "role": "system",
                     "content": (
                         "You ARE Dr. Robert O. Young. Never say 'As an AI' or refer to yourself in third person. "
-                        "Answer naturally as the expert. Your expertise: New Biology, pH Miracle lifestyle, "
-                        "alkaline health, cellular detoxification. Include specific chemical names, "
-                        "scientific data, and study references. Speak with authority."
+                        "Answer naturally as the expert. ONLY use information from the provided context. "
+                        "Do NOT add facts or claims not in the context. Include ALL numbers, percentages, "
+                        "and scientific terms exactly as they appear. Do NOT include URLs."
                     )
                 },
                 {
@@ -493,7 +488,7 @@ def call_groq_stream_direct(prompt: str):
             ],
             model="llama-3.3-70b-versatile",
             temperature=0.7,
-            max_tokens=300,
+            max_tokens=500,
             top_p=0.9,
             stream=True,
         )
@@ -691,7 +686,7 @@ Answer this question directly as Dr. Robert O. Young. Do NOT say "As an AI" or r
             "url": art["url"]
         })
         # Clean and truncate article content
-        cleaned = clean_context(art["content"][:1500])
+        cleaned = clean_context(art["content"][:4000])
         context_parts.append(cleaned)
 
     print("CONTEXT LENGTH:", len(context_parts))
@@ -706,9 +701,14 @@ Answer this question directly as Dr. Robert O. Young. Do NOT say "As an AI" or r
 
 {context}
 
-Answer the following question directly as yourself. Do NOT say "As an AI" or "According to my research" - just answer naturally and confidently. Include specific chemical names with abbreviations, scientific data, and study references exactly as they appear above. Provide a detailed, informative answer.
+Answer the following question directly as yourself. Do NOT say "As an AI" or "According to my research" - just answer naturally and confidently.
 
-IMPORTANT: If the context contains any URLs or links, you MUST include them at the end of your answer. Write a short intro line like "See here for more info:" or "Learn more here:" followed by the actual URLs from the context, each on a new line. Do NOT skip any URLs from the context.
+STRICT RULES:
+1. ONLY use information from the context above. Do NOT add any facts, chemicals, or claims not present in the context.
+2. Include ALL specific numbers, percentages, measurements, and scientific terms exactly as they appear in the context. Do not skip any data.
+3. Include ALL specific chemical names, cell types, and scientific abbreviations mentioned in the context.
+4. Do NOT include any URLs or links. URLs will be added separately.
+5. Keep your answer concise but complete - cover all key points from the context.
 
 Question: {q.question}
 
@@ -734,8 +734,20 @@ Answer:"""
                     # Add small delay to make response feel more natural
                     time.sleep(0.05)  # Increased to 50ms delay between frontend updates
                     
+            # Extract URLs from article content and add them directly (not LLM-generated)
+            content_urls = re.findall(r'https?://[^\s\)]+', context)
+            # Also add article source URLs
+            for ref in references:
+                if ref['url'] and ref['url'] not in content_urls:
+                    content_urls.append(ref['url'])
+
+            if content_urls:
+                yield "\n\nSee here for more info:\n"
+                for url in content_urls:
+                    yield f"{url}\n"
+
             # Add references with article titles
-            yield "\n\nReferences:\n"
+            yield "\nReferences:\n"
             for i, ref in enumerate(references, 1):
                 yield f"{i}. {ref['title']}\n"
 
